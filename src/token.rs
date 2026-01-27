@@ -1,35 +1,57 @@
-use crate::enum_with_static_str;
+use core::ascii;
 
-enum_with_static_str! {
-    pub enum TokenKind {
-        Illegal => "ILLEGAL",
-        Eof     => "EOF",
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum TokenKind {
+    Illegal,
+    Eof,
 
-        // Identifiers + literals
-        Ident => "IDENT", // add, foobar, x, y, ...
-        Int   => "INT",   // 1343456
+    // Identifiers + literals
+    Ident,
+    Int,
 
-        // Operators
-        Assign   => "=",
-        Plus     => "+",
+    // Operators
+    Assign,
+    Plus,
+    Minus,
+    Exclamation,
+    Asterisk,
+    Slash,
 
-        // Delimiters
-        Comma     => ",",
-        Semicolon => ";",
+    LessThan,
+    GreaterThan,
 
-        LParen => "(",
-        RParen => ")",
-        LBrace => "{",
-        RBrace => "}",
+    Eq,
+    NotEq,
 
-        // Keywords
-        Function => "FUNCTION",
-        Let      => "LET"
+    // Delimiters
+    Comma,
+    Semicolon,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
 
-    }
+    // Keywords
+    Function,
+    Let,
+    True,
+    False,
+    If,
+    Else,
+    Return,
 }
 
+#[derive(Debug)]
 pub struct Token {
     pub kind: TokenKind,
-    pub literal: String,
+    pub literal: Vec<ascii::Char>,
+}
+
+impl Token {
+    pub fn new(kind: TokenKind, literal: &[ascii::Char]) -> Self {
+        Self {
+            kind,
+            literal: literal.to_vec(),
+        }
+    }
 }
