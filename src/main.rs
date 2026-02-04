@@ -4,7 +4,9 @@
 use self::lexer::Lexer;
 use self::token::TokenKind;
 
+mod ast;
 mod lexer;
+mod parser;
 mod repl;
 mod token;
 mod utils;

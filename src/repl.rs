@@ -1,6 +1,8 @@
 use std::io::{Write, stdin, stdout};
 
+use crate::ast::Node;
 use crate::lexer::Lexer;
+use crate::parser::Parser;
 use crate::token::TokenKind;
 
 const PROMPT: &str = ">> ";
@@ -20,14 +22,16 @@ pub fn start() {
             .expect("falied to read a line from stdin.");
 
         let mut lexer = Lexer::new(line.as_ascii().expect("failed to parse an input as ascii"));
+        let mut parser = Parser::new(&mut lexer);
 
-        loop {
-            let token = lexer.next_token();
-            if token.kind == TokenKind::Eof {
-                break;
-            }
+        let program = if let Ok(p) = parser.parse_program() {
+            p
+        } else {
+            parser.print_errors();
+            println!("failed to parse.");
+            continue;
+        };
 
-            println!("{token:?}");
-        }
+        println!("{}", program.string().as_str());
     }
 }
