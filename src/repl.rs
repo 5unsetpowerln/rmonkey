@@ -40,6 +40,6 @@ pub fn start() {
             }
         };
 
-        println!("{evaluated:?}");
+        println!("{evaluated}");
     }
 }

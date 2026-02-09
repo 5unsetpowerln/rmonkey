@@ -1,6 +1,4 @@
-const INTEGER_OBJ: &str = "INTEGER";
-const BOOL_OBJ: &str = "BOOL";
-const NULL_OBJ: &str = "NULL";
+use std::fmt::Display;
 
 #[derive(Debug, Clone)]
 pub enum Object {
@@ -9,17 +7,13 @@ pub enum Object {
     Null(Null),
 }
 
-impl Object {
-    fn get_type(&self) -> &'static str {
+impl Display for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Integer(_) => INTEGER_OBJ,
-            Self::Bool(_) => BOOL_OBJ,
-            Self::Null(_) => NULL_OBJ,
+            Self::Integer(x) => write!(f, "{}", x),
+            Self::Bool(x) => write!(f, "{}", x),
+            _ => unimplemented!(),
         }
-    }
-
-    fn inspect() -> String {
-        todo!()
     }
 }
 
@@ -35,6 +29,12 @@ impl Integer {
     }
 }
 
+impl Display for Integer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
 // Bool
 #[derive(Debug, Clone)]
 pub struct Bool {
@@ -44,6 +44,12 @@ pub struct Bool {
 impl Bool {
     pub fn new(value: bool) -> Self {
         Self { value }
+    }
+}
+
+impl Display for Bool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
     }
 }
 
