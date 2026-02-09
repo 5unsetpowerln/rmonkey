@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+pub trait ObjectInterface: Display {}
+
 #[derive(Debug, Clone)]
 pub enum Object {
     Integer(Integer),
@@ -7,13 +9,19 @@ pub enum Object {
     Null(Null),
 }
 
+impl Object {
+    pub fn as_interface(&self) -> &dyn ObjectInterface {
+        match self {
+            Object::Bool(x) => x,
+            Object::Integer(x) => x,
+            Object::Null(x) => x,
+        }
+    }
+}
+
 impl Display for Object {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Integer(x) => write!(f, "{}", x),
-            Self::Bool(x) => write!(f, "{}", x),
-            _ => unimplemented!(),
-        }
+        write!(f, "{}", self.as_interface())
     }
 }
 
@@ -28,6 +36,8 @@ impl Integer {
         Self { value }
     }
 }
+
+impl ObjectInterface for Integer {}
 
 impl Display for Integer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -47,6 +57,8 @@ impl Bool {
     }
 }
 
+impl ObjectInterface for Bool {}
+
 impl Display for Bool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value)
@@ -56,3 +68,11 @@ impl Display for Bool {
 // Null
 #[derive(Debug, Clone)]
 pub struct Null {}
+
+impl Display for Null {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "null")
+    }
+}
+
+impl ObjectInterface for Null {}
