@@ -52,7 +52,7 @@ pub struct Bool {
 }
 
 impl Bool {
-    pub fn new(value: bool) -> Self {
+    pub const fn new(value: bool) -> Self {
         Self { value }
     }
 }
@@ -69,6 +69,12 @@ impl Display for Bool {
 #[derive(Debug, Clone)]
 pub struct Null {}
 
+impl Null {
+    pub const fn new() -> Self {
+        Self {}
+    }
+}
+
 impl Display for Null {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "null")
@@ -76,3 +82,8 @@ impl Display for Null {
 }
 
 impl ObjectInterface for Null {}
+
+// helper constants
+pub const TRUE: Object = Object::Bool(Bool::new(true));
+pub const FALSE: Object = Object::Bool(Bool::new(false));
+pub const NULL: Object = Object::Null(Null::new());

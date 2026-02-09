@@ -32,6 +32,8 @@ pub fn start() {
             continue;
         };
 
+        println!("ast: {program:#?}");
+
         let evaluated = match eval(&program) {
             Ok(x) => x,
             Err(e) => {

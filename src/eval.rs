@@ -1,6 +1,9 @@
+use core::ascii;
+
 use anyhow::{Context, Result, anyhow};
 
 use crate::ast::{Node, NodeInterface};
+use crate::object::{FALSE, NULL, TRUE};
 use crate::{ast, object};
 
 pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
@@ -28,6 +31,15 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
         Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
             int_literal.value,
         ))),
+        Node::PrefixExpression(prefix_expr) => {
+            let right = eval(&*prefix_expr.right)
+                .context("failed to eval right expression")
+                .context("failed to eval prefix expression")?;
+
+            let obj = eval_prefix_expression(&prefix_expr.operator, &right);
+
+            Ok(obj)
+        }
         Node::BoolLiteral(bool_literal) => {
             Ok(object::Object::Bool(object::Bool::new(bool_literal.value)))
         }
@@ -49,6 +61,27 @@ fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
     }
 
     unreachable!()
+}
+
+fn eval_prefix_expression(operator: &[ascii::Char], right: &object::Object) -> object::Object {
+    match operator.as_str() {
+        "!" => eval_exclamation_expression(right),
+        _ => NULL.clone(),
+    }
+}
+
+fn eval_exclamation_expression(right: &object::Object) -> object::Object {
+    match right {
+        object::Object::Bool(bool_obj) => {
+            if bool_obj.value {
+                FALSE.clone()
+            } else {
+                TRUE.clone()
+            }
+        }
+        object::Object::Null(_) => TRUE.clone(),
+        _ => FALSE.clone(),
+    }
 }
 
 mod test {
@@ -99,6 +132,36 @@ mod test {
         }
 
         let tests = vec![Test::new("true", true), Test::new("false", false)];
+
+        for test in tests.iter() {
+            let obj = test_eval(&test.input);
+            test_bool_object(&obj, test.expected);
+        }
+    }
+
+    #[test]
+    fn test_exclamation_operator() {
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: bool,
+        }
+        impl Test {
+            fn new(input: &str, expected: bool) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+
+        let tests = vec![
+            Test::new("!true", false),
+            Test::new("!false", true),
+            Test::new("!5", false),
+            Test::new("!!true", true),
+            Test::new("!!false", false),
+            Test::new("!!5", true),
+        ];
 
         for test in tests.iter() {
             let obj = test_eval(&test.input);
