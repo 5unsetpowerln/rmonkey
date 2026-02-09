@@ -28,6 +28,9 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
         Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
             int_literal.value,
         ))),
+        Node::BoolLiteral(bool_literal) => {
+            Ok(object::Object::Bool(object::Bool::new(bool_literal.value)))
+        }
         _ => unimplemented!(),
     }
 }
@@ -80,6 +83,29 @@ mod test {
         }
     }
 
+    #[test]
+    fn test_eval_bool_expression() {
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: bool,
+        }
+        impl Test {
+            fn new(input: &str, expected: bool) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+
+        let tests = vec![Test::new("true", true), Test::new("false", false)];
+
+        for test in tests.iter() {
+            let obj = test_eval(&test.input);
+            test_bool_object(&obj, test.expected);
+        }
+    }
+
     fn test_eval(input: &[ascii::Char]) -> object::Object {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
@@ -102,6 +128,18 @@ mod test {
 
         if int_obj.value != expected {
             panic!("int_obj.value is not {expected}. got: {}", int_obj.value);
+        }
+    }
+
+    fn test_bool_object(obj: &Object, expected: bool) {
+        let bool_obj = if let Object::Bool(bool_obj) = obj {
+            bool_obj
+        } else {
+            panic!("obj is not Bool. got: {obj:?}");
+        };
+
+        if bool_obj.value != expected {
+            panic!("bool_obj.value is not {expected}. got: {}", bool_obj.value);
         }
     }
 }
