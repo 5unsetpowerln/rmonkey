@@ -1,6 +1,7 @@
 use std::io::{Write, stdin, stdout};
 
 use crate::ast::NodeInterface;
+use crate::eval::eval;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
@@ -31,6 +32,14 @@ pub fn start() {
             continue;
         };
 
-        println!("{}", program.string().as_str());
+        let evaluated = match eval(&program) {
+            Ok(x) => x,
+            Err(e) => {
+                println!("failed to evaluate the program: {e}");
+                continue;
+            }
+        };
+
+        println!("{evaluated:?}");
     }
 }
