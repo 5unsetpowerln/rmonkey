@@ -571,7 +571,7 @@ impl<'a> Parser<'a> {
 // #[cfg(test)]
 mod test {
     use super::Parser;
-    use crate::ast::{Expression, Node, Statement};
+    use crate::ast::{Expression, NodeInterface, Statement};
     use crate::lexer::Lexer;
     use core::ascii;
 

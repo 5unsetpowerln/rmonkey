@@ -3,7 +3,28 @@ use core::ascii;
 use crate::token::Token;
 
 // Node
-pub trait Node {
+pub enum Node<'a> {
+    Expression(&'a Expression),
+    Identifier(&'a Identifier),
+    IntegerLiteral(&'a IntegerLiteral),
+    BoolLiteral(&'a BoolLiteral),
+    PrefixExpression(&'a PrefixExpression),
+    InfixExpression(&'a InfixExpression),
+    IfExpression(&'a IfExpression),
+    FunctionLiteral(&'a FunctionLiteral),
+    CallExpression(&'a CallExpression),
+    BlockStatement(&'a BlockStatement),
+    Statement(&'a Statement),
+    LetStatement(&'a LetStatement),
+    ReturnStatement(&'a ReturnStatement),
+    ExpressionStatement(&'a ExpressionStatement),
+    Program(&'a Program),
+}
+
+pub trait NodeInterface {
+    /// 実体がenumのNode、すなわちExpressionやStatementは、Node::Expression/Statementを返すのではなくて、ラップされているNodeを返す。
+    /// 例えば、Expression(IntegerLiteral)に対してget_nodeを呼ぶと、Node::IntegerLiteralが返される。
+    fn get_node(&self) -> Node;
     fn token_literal(&self) -> Vec<ascii::Char>;
     fn string(&self) -> Vec<ascii::Char>;
 }
@@ -27,7 +48,11 @@ impl Expression {
     }
 }
 
-impl Node for Expression {
+impl NodeInterface for Expression {
+    fn get_node(&self) -> Node {
+        Node::Expression(self)
+    }
+
     fn token_literal(&self) -> Vec<ascii::Char> {
         match self {
             Self::Identifier(expr) => expr.token_literal(),
@@ -77,7 +102,10 @@ impl Identifier {
     }
 }
 
-impl Node for Identifier {
+impl NodeInterface for Identifier {
+    fn get_node(&self) -> Node {
+        Node::Identifier(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -100,7 +128,11 @@ impl IntegerLiteral {
     }
 }
 
-impl Node for IntegerLiteral {
+impl NodeInterface for IntegerLiteral {
+    fn get_node(&self) -> Node {
+        Node::IntegerLiteral(self)
+    }
+
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -123,7 +155,11 @@ impl BoolLiteral {
     }
 }
 
-impl Node for BoolLiteral {
+impl NodeInterface for BoolLiteral {
+    fn get_node(&self) -> Node {
+        Node::BoolLiteral(self)
+    }
+
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -158,7 +194,11 @@ impl PrefixExpression {
     }
 }
 
-impl Node for PrefixExpression {
+impl NodeInterface for PrefixExpression {
+    fn get_node(&self) -> Node {
+        Node::PrefixExpression(self)
+    }
+
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -199,7 +239,10 @@ impl InfixExpression {
     }
 }
 
-impl Node for InfixExpression {
+impl NodeInterface for InfixExpression {
+    fn get_node(&self) -> Node {
+        Node::InfixExpression(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -243,7 +286,10 @@ impl IfExpression {
     }
 }
 
-impl Node for IfExpression {
+impl NodeInterface for IfExpression {
+    fn get_node(&self) -> Node {
+        Node::IfExpression(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -283,7 +329,10 @@ impl FunctionLiteral {
     }
 }
 
-impl Node for FunctionLiteral {
+impl NodeInterface for FunctionLiteral {
+    fn get_node(&self) -> Node {
+        Node::FunctionLiteral(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -324,7 +373,10 @@ impl CallExpression {
     }
 }
 
-impl Node for CallExpression {
+impl NodeInterface for CallExpression {
+    fn get_node(&self) -> Node {
+        Node::CallExpression(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -363,7 +415,10 @@ impl BlockStatement {
     }
 }
 
-impl Node for BlockStatement {
+impl NodeInterface for BlockStatement {
+    fn get_node(&self) -> Node {
+        Node::BlockStatement(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -384,7 +439,11 @@ pub enum Statement {
     Return(ReturnStatement),
     Expression(ExpressionStatement),
 }
-impl Node for Statement {
+impl NodeInterface for Statement {
+    fn get_node(&self) -> Node {
+        Node::Statement(self)
+    }
+
     fn token_literal(&self) -> Vec<ascii::Char> {
         match self {
             Self::Let(s) => s.token_literal(),
@@ -424,7 +483,10 @@ impl LetStatement {
     }
 }
 
-impl Node for LetStatement {
+impl NodeInterface for LetStatement {
+    fn get_node(&self) -> Node {
+        Node::LetStatement(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -469,7 +531,10 @@ impl ReturnStatement {
     }
 }
 
-impl Node for ReturnStatement {
+impl NodeInterface for ReturnStatement {
+    fn get_node(&self) -> Node {
+        Node::ReturnStatement(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -502,7 +567,10 @@ impl ExpressionStatement {
     }
 }
 
-impl Node for ExpressionStatement {
+impl NodeInterface for ExpressionStatement {
+    fn get_node(&self) -> Node {
+        Node::ExpressionStatement(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         self.token.literal.clone()
     }
@@ -526,7 +594,10 @@ impl Program {
     }
 }
 
-impl Node for Program {
+impl NodeInterface for Program {
+    fn get_node(&self) -> Node {
+        Node::Program(self)
+    }
     fn token_literal(&self) -> Vec<ascii::Char> {
         match self.statements.first() {
             Some(stmt) => stmt.token_literal(),
@@ -547,7 +618,7 @@ impl Node for Program {
 
 // #[cfg(test)]
 mod test {
-    use crate::ast::{Expression, Identifier, LetStatement, Node, Statement};
+    use crate::ast::{Expression, Identifier, LetStatement, NodeInterface, Statement};
     use crate::token::{Token, TokenKind};
 
     use super::Program;

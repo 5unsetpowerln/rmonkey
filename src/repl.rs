@@ -1,6 +1,6 @@
 use std::io::{Write, stdin, stdout};
 
-use crate::ast::Node;
+use crate::ast::NodeInterface;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
