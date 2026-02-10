@@ -65,12 +65,13 @@ fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
 
 fn eval_prefix_expression(operator: &[ascii::Char], right: &object::Object) -> object::Object {
     match operator.as_str() {
-        "!" => eval_exclamation_expression(right),
+        "!" => eval_exclamation_operator_expression(right),
+        "-" => eval_minus_operator_expression(right),
         _ => NULL.clone(),
     }
 }
 
-fn eval_exclamation_expression(right: &object::Object) -> object::Object {
+fn eval_exclamation_operator_expression(right: &object::Object) -> object::Object {
     match right {
         object::Object::Bool(bool_obj) => {
             if bool_obj.value {
@@ -81,6 +82,14 @@ fn eval_exclamation_expression(right: &object::Object) -> object::Object {
         }
         object::Object::Null(_) => TRUE.clone(),
         _ => FALSE.clone(),
+    }
+}
+
+fn eval_minus_operator_expression(right: &object::Object) -> object::Object {
+    if let object::Object::Integer(int_obj) = right {
+        object::Object::Integer(object::Integer::new(-int_obj.value))
+    } else {
+        NULL.clone()
     }
 }
 
@@ -108,7 +117,12 @@ mod test {
             }
         }
 
-        let tests = vec![Test::new("5", 5), Test::new("10", 10)];
+        let tests = vec![
+            Test::new("5", 5),
+            Test::new("10", 10),
+            Test::new("-5", -5),
+            Test::new("-10", -10),
+        ];
 
         for test in tests.iter() {
             let obj = test_eval(&test.input);
@@ -140,7 +154,7 @@ mod test {
     }
 
     #[test]
-    fn test_exclamation_operator() {
+    fn test_eval_exclamation_operator() {
         struct Test {
             input: Vec<ascii::Char>,
             expected: bool,
