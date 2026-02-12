@@ -8,6 +8,7 @@ pub enum Object {
     Integer(Integer),
     Bool(Bool),
     Null(Null),
+    ReturnValue(ReturnValue),
 }
 
 impl Object {
@@ -16,6 +17,7 @@ impl Object {
             Object::Bool(x) => x,
             Object::Integer(x) => x,
             Object::Null(x) => x,
+            Object::ReturnValue(x) => x,
         }
     }
 
@@ -29,6 +31,14 @@ impl Object {
 
     pub fn null() -> Self {
         Self::Null(Null::new())
+    }
+
+    pub fn ret_val(val: Object) -> Self {
+        Self::ReturnValue(ReturnValue::new(val))
+    }
+
+    pub fn is_returned(&self) -> bool {
+        matches!(self, Self::ReturnValue(_))
     }
 }
 
@@ -95,6 +105,28 @@ impl Display for Null {
 }
 
 impl ObjectInterface for Null {}
+
+// ReturnValue
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ReturnValue {
+    pub value: Box<Object>,
+}
+
+impl ReturnValue {
+    pub fn new(value: Object) -> Self {
+        Self {
+            value: Box::new(value),
+        }
+    }
+}
+
+impl ObjectInterface for ReturnValue {}
+
+impl Display for ReturnValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ret ({})", self.value)
+    }
+}
 
 // helper constants
 pub const TRUE: Object = Object::Bool(Bool::new(true));

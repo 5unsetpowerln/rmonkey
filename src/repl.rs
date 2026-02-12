@@ -4,6 +4,7 @@ use crate::ast::NodeInterface;
 use crate::eval::eval;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::utils::print_errors;
 
 const PROMPT: &str = ">> ";
 
@@ -32,12 +33,12 @@ pub fn start() {
             continue;
         };
 
-        println!("ast: {program:#?}");
+        // println!("ast: {program:#?}");
 
         let evaluated = match eval(&program) {
             Ok(x) => x,
-            Err(e) => {
-                println!("failed to evaluate the program: {e}");
+            Err(err) => {
+                print_errors("failed to evaluate the program", err);
                 continue;
             }
         };

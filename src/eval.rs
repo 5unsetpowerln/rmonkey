@@ -1,6 +1,7 @@
 use core::ascii;
+use std::mem::discriminant;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::ast::{Node, NodeInterface};
 use crate::object::{FALSE, NULL, Object, TRUE};
@@ -9,7 +10,7 @@ use crate::{ast, object};
 pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
     match node.get_node() {
         // program
-        Node::Program(program) => eval_statements(&program.statements),
+        Node::Program(program) => eval_program(program),
         // statements
         Node::Statement(stmt) => match stmt {
             ast::Statement::Expression(x) => eval(x),
@@ -17,6 +18,11 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
             ast::Statement::Return(x) => eval(x),
         },
         Node::ExpressionStatement(expr_stmt) => eval(&expr_stmt.value),
+        Node::ReturnStatement(ret_stmt) => {
+            let value =
+                eval(&ret_stmt.value).context("failed to eval expression for return value.")?;
+            Ok(Object::ret_val(value))
+        }
         // expressions
         //// general expressions
         Node::Expression(expr) => match expr {
@@ -35,9 +41,8 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
                 .context("failed to eval right expression")
                 .context("failed to eval prefix expression")?;
 
-            let obj = eval_prefix_expression(&prefix_expr.operator, &right);
-
-            Ok(obj)
+            eval_prefix_expression(&prefix_expr.operator, &right)
+                .context("failed to eval prefix expression")
         }
         //// infix expression
         Node::InfixExpression(infix_expr) => {
@@ -47,13 +52,12 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
             let right = eval(&*infix_expr.right)
                 .context("failed to eval right expression")
                 .context("failed to eval infix expression")?;
-            println!("{:?} {:?} {:?}", left, &infix_expr.operator, &right);
-            let obj = eval_infix_expression(&infix_expr.operator, &left, &right);
-            Ok(obj)
+            eval_infix_expression(&infix_expr.operator, &left, &right)
+                .context("failed to eval infix expression")
         }
         //// if-else
         Node::IfExpression(if_expr) => eval_if_expression(if_expr),
-        Node::BlockStatement(block_stmt) => eval_statements(&block_stmt.statements),
+        Node::BlockStatement(block_stmt) => eval_block_statement(block_stmt),
         //// literals
         Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
             int_literal.value,
@@ -65,6 +69,46 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
     }
 }
 
+fn eval_program(program: &ast::Program) -> Result<object::Object> {
+    let stmts = &program.statements;
+
+    if stmts.is_empty() {
+        return Err(anyhow!("statements is empty."));
+    }
+
+    for (i, stmt) in stmts.iter().enumerate() {
+        let result = eval(stmt).context("failed to evaluate a statement.")?;
+
+        if let Object::ReturnValue(ret_value) = result {
+            return Ok((*ret_value.value).clone());
+        }
+
+        if i == stmts.len() - 1 {
+            return Ok(result);
+        }
+    }
+
+    unreachable!()
+}
+
+fn eval_block_statement(block_stmt: &ast::BlockStatement) -> Result<object::Object> {
+    let stmts = &block_stmt.statements;
+
+    if stmts.is_empty() {
+        return Err(anyhow!("statements is empty."));
+    }
+
+    for (i, stmt) in stmts.iter().enumerate() {
+        let result = eval(stmt).context("failed to evaluate a statement.")?;
+
+        if i == stmts.len() - 1 || result.is_returned() {
+            return Ok(result);
+        }
+    }
+
+    unreachable!()
+}
+
 fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
     if statements.is_empty() {
         return Err(anyhow!("statements is empty."));
@@ -72,6 +116,10 @@ fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
 
     for (i, stmt) in statements.iter().enumerate() {
         let result = eval(stmt).context("failed to evaluate a statement.")?;
+
+        if let Object::ReturnValue(ret_value) = result {
+            return Ok((*ret_value.value).clone());
+        }
 
         if i == statements.len() - 1 {
             return Ok(result);
@@ -82,11 +130,15 @@ fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
 }
 
 // prefix
-fn eval_prefix_expression(operator: &[ascii::Char], right: &object::Object) -> object::Object {
+fn eval_prefix_expression(
+    operator: &[ascii::Char],
+    right: &object::Object,
+) -> Result<object::Object> {
     match operator.as_str() {
-        "!" => eval_exclamation_operator_expression(right),
-        "-" => eval_minus_prefix_operator_expression(right),
-        _ => NULL.clone(),
+        "!" => Ok(eval_exclamation_operator_expression(right)),
+        "-" => Ok(eval_minus_prefix_operator_expression(right)
+            .context("failed to eval minux prefix operator expression.")?),
+        _ => bail!("unknown operator: {}", operator.as_str()),
     }
 }
 
@@ -104,12 +156,14 @@ fn eval_exclamation_operator_expression(right: &object::Object) -> object::Objec
     }
 }
 
-fn eval_minus_prefix_operator_expression(right: &object::Object) -> object::Object {
+fn eval_minus_prefix_operator_expression(right: &object::Object) -> Result<object::Object> {
     if let object::Object::Integer(int_obj) = right {
-        object::Object::Integer(object::Integer::new(-int_obj.value))
-    } else {
-        NULL.clone()
+        return Ok(object::Object::Integer(object::Integer::new(
+            -int_obj.value,
+        )));
     }
+
+    bail!("minus is not prefix operator for {}.", right);
 }
 
 // infix
@@ -117,16 +171,22 @@ fn eval_infix_expression(
     operator: &[ascii::Char],
     left: &object::Object,
     right: &object::Object,
-) -> object::Object {
-    if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
-        return eval_integer_infix_expression(operator, x, y);
+) -> Result<object::Object> {
+    // 型が違う場合はエラー
+    if discriminant(left) != discriminant(right) {
+        bail!("type mismatch: {left:?} {} {right:?}", operator.as_str());
     }
 
     match operator.as_str() {
-        "==" => object::Object::Bool(object::Bool::new(*right == *left)),
-        "!=" => object::Object::Bool(object::Bool::new(*right != *left)),
+        "==" => Ok(object::Object::Bool(object::Bool::new(*right == *left))),
+        "!=" => Ok(object::Object::Bool(object::Bool::new(*right != *left))),
         _ => {
-            unimplemented!()
+            if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
+                return eval_integer_infix_expression(operator, x, y)
+                    .context("failed to eval infix expression for integers.");
+            }
+
+            bail!("unknown operator: {}", operator.as_str());
         }
     }
 }
@@ -135,17 +195,17 @@ fn eval_integer_infix_expression(
     operator: &[ascii::Char],
     left: &object::Integer,
     right: &object::Integer,
-) -> object::Object {
+) -> Result<object::Object> {
     match operator.as_str() {
-        "+" => object::Object::Integer(object::Integer::new(left.value + right.value)),
-        "-" => object::Object::Integer(object::Integer::new(left.value - right.value)),
-        "*" => object::Object::Integer(object::Integer::new(left.value * right.value)),
-        "/" => object::Object::Integer(object::Integer::new(left.value / right.value)),
-        "<" => object::Object::Bool(object::Bool::new(left.value < right.value)),
-        ">" => object::Object::Bool(object::Bool::new(left.value > right.value)),
-        "==" => object::Object::Bool(object::Bool::new(left.value == right.value)),
-        "!=" => object::Object::Bool(object::Bool::new(left.value != right.value)),
-        _ => NULL.clone(),
+        "+" => Ok(object::Object::int(left.value + right.value)),
+        "-" => Ok(object::Object::int(left.value - right.value)),
+        "*" => Ok(object::Object::int(left.value * right.value)),
+        "/" => Ok(object::Object::int(left.value / right.value)),
+        "<" => Ok(object::Object::bool(left.value < right.value)),
+        ">" => Ok(object::Object::bool(left.value > right.value)),
+        "==" => Ok(object::Object::bool(left.value == right.value)),
+        "!=" => Ok(object::Object::bool(left.value != right.value)),
+        _ => bail!("unknown operator: {}.", operator.as_str()),
     }
 }
 
@@ -218,7 +278,6 @@ mod test {
 
         for (i, test) in tests.iter().enumerate() {
             let obj = test_eval(&test.input);
-            println!("{:?}", test);
             test_integer_object(&obj, test.expected).unwrap_or_else(|err| {
                 panic!("test {i} failed: {}", err);
             });
@@ -323,10 +382,51 @@ mod test {
                 object::Object::Bool(b) => test_bool_object(&obj, b.value),
                 object::Object::Integer(i) => test_integer_object(&obj, i.value),
                 object::Object::Null(n) => test_null_object(&obj),
+                object::Object::ReturnValue(_) => panic!("program returned ReturnValue."),
             };
 
             r.unwrap_or_else(|err| {
                 panic!("test {} failed. got: {}", i, err);
+            });
+        }
+    }
+
+    #[test]
+    fn test_return_statement() {
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: i64,
+        }
+        impl Test {
+            fn new(input: &str, expected: i64) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+
+        let tests = vec![
+            Test::new("return 10;", 10),
+            Test::new("return 10; 9;", 10),
+            Test::new("return 2 * 5; 9;", 10),
+            Test::new("9; return 2 * 5; 9;", 10),
+            Test::new(
+                "if (10 > 1) {
+                  if (10 > 1) {
+                    return 10;
+                  }
+
+                  return 1;
+                }",
+                10,
+            ),
+        ];
+
+        for (i, test) in tests.iter().enumerate() {
+            let obj = test_eval(&test.input);
+            test_integer_object(&obj, test.expected).unwrap_or_else(|err| {
+                panic!("test {} failed: {}", i, err);
             });
         }
     }
