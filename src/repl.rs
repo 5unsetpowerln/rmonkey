@@ -3,6 +3,7 @@ use std::io::{Write, stdin, stdout};
 use crate::ast::NodeInterface;
 use crate::eval::eval;
 use crate::lexer::Lexer;
+use crate::object::Environment;
 use crate::parser::Parser;
 use crate::utils::print_errors;
 
@@ -11,6 +12,8 @@ const PROMPT: &str = ">> ";
 pub fn start() {
     let stdin_ = stdin();
     let mut stdout_ = stdout();
+
+    let mut environment = Environment::new();
 
     loop {
         print!("{PROMPT}");
@@ -33,9 +36,7 @@ pub fn start() {
             continue;
         };
 
-        // println!("ast: {program:#?}");
-
-        let evaluated = match eval(&program) {
+        let evaluated = match eval(&program, &mut environment) {
             Ok(x) => x,
             Err(err) => {
                 print_errors("failed to evaluate the program", err);

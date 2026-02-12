@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 
 pub trait ObjectInterface: Display {}
@@ -132,3 +132,25 @@ impl Display for ReturnValue {
 pub const TRUE: Object = Object::Bool(Bool::new(true));
 pub const FALSE: Object = Object::Bool(Bool::new(false));
 pub const NULL: Object = Object::Null(Null::new());
+
+// environment
+#[derive(Debug)]
+pub struct Environment {
+    store: HashMap<String, Object>,
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Self {
+            store: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Object> {
+        self.store.get(name)
+    }
+
+    pub fn set(&mut self, name: &str, val: Object) {
+        self.store.insert(name.to_string(), val);
+    }
+}

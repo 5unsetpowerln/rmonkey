@@ -4,40 +4,47 @@ use std::mem::discriminant;
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::ast::{Node, NodeInterface};
-use crate::object::{FALSE, NULL, Object, TRUE};
+use crate::object::{Environment, FALSE, NULL, Object, TRUE};
 use crate::{ast, object};
 
-pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
+pub fn eval<T: ast::NodeInterface>(node: &T, env: &mut Environment) -> Result<object::Object> {
     match node.get_node() {
         // program
-        Node::Program(program) => eval_program(program),
+        Node::Program(program) => eval_program(program, env),
         // statements
         Node::Statement(stmt) => match stmt {
-            ast::Statement::Expression(x) => eval(x),
-            ast::Statement::Let(x) => eval(x),
-            ast::Statement::Return(x) => eval(x),
+            ast::Statement::Expression(x) => eval(x, env),
+            ast::Statement::Let(x) => eval(x, env),
+            ast::Statement::Return(x) => eval(x, env),
         },
-        Node::ExpressionStatement(expr_stmt) => eval(&expr_stmt.value),
+        Node::ExpressionStatement(expr_stmt) => eval(&expr_stmt.value, env),
         Node::ReturnStatement(ret_stmt) => {
-            let value =
-                eval(&ret_stmt.value).context("failed to eval expression for return value.")?;
+            let value = eval(&ret_stmt.value, env)
+                .context("failed to eval expression for return value.")?;
             Ok(Object::ret_val(value))
+        }
+        Node::LetStatement(let_stmt) => {
+            let value = eval(&let_stmt.value, env)
+                .context("failed to eval value for let statement.")
+                .context("failed to eval let statement.")?;
+            env.set(let_stmt.name.value.as_str(), value);
+            Ok(NULL.clone())
         }
         // expressions
         //// general expressions
         Node::Expression(expr) => match expr {
-            ast::Expression::BoolLiteral(x) => eval(x),
-            ast::Expression::Call(x) => eval(x),
-            ast::Expression::Function(x) => eval(x),
-            ast::Expression::Identifier(x) => eval(x),
-            ast::Expression::If(x) => eval(x),
-            ast::Expression::Infix(x) => eval(x),
-            ast::Expression::IntegerLiteral(x) => eval(x),
-            ast::Expression::Prefix(x) => eval(x),
+            ast::Expression::BoolLiteral(x) => eval(x, env),
+            ast::Expression::Call(x) => eval(x, env),
+            ast::Expression::Function(x) => eval(x, env),
+            ast::Expression::Identifier(x) => eval(x, env),
+            ast::Expression::If(x) => eval(x, env),
+            ast::Expression::Infix(x) => eval(x, env),
+            ast::Expression::IntegerLiteral(x) => eval(x, env),
+            ast::Expression::Prefix(x) => eval(x, env),
         },
         //// prefix expression
         Node::PrefixExpression(prefix_expr) => {
-            let right = eval(&*prefix_expr.right)
+            let right = eval(&*prefix_expr.right, env)
                 .context("failed to eval right expression")
                 .context("failed to eval prefix expression")?;
 
@@ -46,18 +53,20 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
         }
         //// infix expression
         Node::InfixExpression(infix_expr) => {
-            let left = eval(&*infix_expr.left)
+            let left = eval(&*infix_expr.left, env)
                 .context("failed to eval left expression")
                 .context("failed to eval infix expression")?;
-            let right = eval(&*infix_expr.right)
+            let right = eval(&*infix_expr.right, env)
                 .context("failed to eval right expression")
                 .context("failed to eval infix expression")?;
             eval_infix_expression(&infix_expr.operator, &left, &right)
                 .context("failed to eval infix expression")
         }
         //// if-else
-        Node::IfExpression(if_expr) => eval_if_expression(if_expr),
-        Node::BlockStatement(block_stmt) => eval_block_statement(block_stmt),
+        Node::IfExpression(if_expr) => eval_if_expression(if_expr, env),
+        Node::BlockStatement(block_stmt) => eval_block_statement(block_stmt, env),
+        //// identifier
+        Node::Identifier(ident) => eval_identifier(ident, env),
         //// literals
         Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
             int_literal.value,
@@ -69,7 +78,7 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
     }
 }
 
-fn eval_program(program: &ast::Program) -> Result<object::Object> {
+fn eval_program(program: &ast::Program, env: &mut Environment) -> Result<object::Object> {
     let stmts = &program.statements;
 
     if stmts.is_empty() {
@@ -77,7 +86,7 @@ fn eval_program(program: &ast::Program) -> Result<object::Object> {
     }
 
     for (i, stmt) in stmts.iter().enumerate() {
-        let result = eval(stmt).context("failed to evaluate a statement.")?;
+        let result = eval(stmt, env).context("failed to evaluate a statement.")?;
 
         if let Object::ReturnValue(ret_value) = result {
             return Ok((*ret_value.value).clone());
@@ -91,7 +100,10 @@ fn eval_program(program: &ast::Program) -> Result<object::Object> {
     unreachable!()
 }
 
-fn eval_block_statement(block_stmt: &ast::BlockStatement) -> Result<object::Object> {
+fn eval_block_statement(
+    block_stmt: &ast::BlockStatement,
+    env: &mut Environment,
+) -> Result<object::Object> {
     let stmts = &block_stmt.statements;
 
     if stmts.is_empty() {
@@ -99,7 +111,7 @@ fn eval_block_statement(block_stmt: &ast::BlockStatement) -> Result<object::Obje
     }
 
     for (i, stmt) in stmts.iter().enumerate() {
-        let result = eval(stmt).context("failed to evaluate a statement.")?;
+        let result = eval(stmt, env).context("failed to evaluate a statement.")?;
 
         if i == stmts.len() - 1 || result.is_returned() {
             return Ok(result);
@@ -109,13 +121,13 @@ fn eval_block_statement(block_stmt: &ast::BlockStatement) -> Result<object::Obje
     unreachable!()
 }
 
-fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
+fn eval_statements(statements: &[ast::Statement], env: &mut Environment) -> Result<object::Object> {
     if statements.is_empty() {
         return Err(anyhow!("statements is empty."));
     }
 
     for (i, stmt) in statements.iter().enumerate() {
-        let result = eval(stmt).context("failed to evaluate a statement.")?;
+        let result = eval(stmt, env).context("failed to evaluate a statement.")?;
 
         if let Object::ReturnValue(ret_value) = result {
             return Ok((*ret_value.value).clone());
@@ -210,13 +222,14 @@ fn eval_integer_infix_expression(
 }
 
 // if-else
-fn eval_if_expression(if_expr: &ast::IfExpression) -> Result<Object> {
-    let cond_obj = eval(&*if_expr.condition).context("failed to eval expression for condition.")?;
+fn eval_if_expression(if_expr: &ast::IfExpression, env: &mut Environment) -> Result<Object> {
+    let cond_obj =
+        eval(&*if_expr.condition, env).context("failed to eval expression for condition.")?;
 
     if is_truethy(&cond_obj) {
-        eval(&if_expr.consequence).context("failed to eval consequence block.")
+        eval(&if_expr.consequence, env).context("failed to eval consequence block.")
     } else if let Some(alt) = &if_expr.alternative {
-        eval(alt).context("failed to eval alternative block.")
+        eval(alt, env).context("failed to eval alternative block.")
     } else {
         Ok(NULL.clone())
     }
@@ -230,6 +243,15 @@ fn is_truethy(obj: &object::Object) -> bool {
     }
 }
 
+// let
+fn eval_identifier(ident: &ast::Identifier, env: &Environment) -> Result<Object> {
+    if let Some(value) = env.get(ident.value.as_str()) {
+        return Ok(value.clone());
+    }
+
+    bail!("identifier not found: {}", ident.value.as_str());
+}
+
 mod test {
     use std::ascii;
     use std::sync::BarrierWaitResult;
@@ -237,8 +259,9 @@ mod test {
     use anyhow::{Result, anyhow, bail};
 
     use crate::lexer::Lexer;
-    use crate::object::{self, Object};
+    use crate::object::{self, Environment, Object};
     use crate::parser::Parser;
+    use crate::utils::print_errors;
 
     use super::eval;
 
@@ -431,6 +454,36 @@ mod test {
         }
     }
 
+    #[test]
+    fn test_let_statements() {
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: i64,
+        }
+        impl Test {
+            fn new(input: &str, expected: i64) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+
+        let tests = vec![
+            Test::new("let a = 5; a;", 5),
+            Test::new("let a = 5 * 5; a;", 25),
+            Test::new("let a = 5; let b = a; b;", 5),
+            Test::new("let a = 5; let b = a; let c = a + b + 5; c;", 15),
+        ];
+
+        for (i, test) in tests.iter().enumerate() {
+            let obj = test_eval(&test.input);
+            test_integer_object(&obj, test.expected).unwrap_or_else(|err| {
+                panic!("test {i} failed: {err}.",);
+            });
+        }
+    }
+
     fn test_eval(input: &[ascii::Char]) -> object::Object {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
@@ -438,9 +491,11 @@ mod test {
             parser.print_errors();
             panic!("failed to parse.");
         });
+        let mut env = Environment::new();
 
-        eval(&program).unwrap_or_else(|e| {
-            panic!("failed to evaluate: {e}");
+        eval(&program, &mut env).unwrap_or_else(|e| {
+            print_errors("failed to evaluate", e);
+            panic!()
         })
     }
 
