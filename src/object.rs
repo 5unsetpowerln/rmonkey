@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::fmt::Display;
 
 pub trait ObjectInterface: Display {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Object {
     Integer(Integer),
     Bool(Bool),
@@ -26,7 +27,7 @@ impl Display for Object {
 }
 
 // Integer
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Integer {
     pub value: i64,
 }
@@ -46,7 +47,7 @@ impl Display for Integer {
 }
 
 // Bool
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bool {
     pub value: bool,
 }
@@ -66,7 +67,7 @@ impl Display for Bool {
 }
 
 // Null
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Null {}
 
 impl Null {

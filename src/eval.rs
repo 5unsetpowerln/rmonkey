@@ -18,6 +18,7 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
         },
         Node::ExpressionStatement(expr_stmt) => eval(&expr_stmt.value),
         // expressions
+        //// general expressions
         Node::Expression(expr) => match expr {
             ast::Expression::BoolLiteral(x) => eval(x),
             ast::Expression::Call(x) => eval(x),
@@ -28,9 +29,7 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
             ast::Expression::IntegerLiteral(x) => eval(x),
             ast::Expression::Prefix(x) => eval(x),
         },
-        Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
-            int_literal.value,
-        ))),
+        //// prefix expression
         Node::PrefixExpression(prefix_expr) => {
             let right = eval(&*prefix_expr.right)
                 .context("failed to eval right expression")
@@ -40,6 +39,22 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
 
             Ok(obj)
         }
+        //// infix expression
+        Node::InfixExpression(infix_expr) => {
+            let left = eval(&*infix_expr.left)
+                .context("failed to eval left expression")
+                .context("failed to eval infix expression")?;
+            let right = eval(&*infix_expr.right)
+                .context("failed to eval right expression")
+                .context("failed to eval infix expression")?;
+            println!("{:?} {:?} {:?}", left, &infix_expr.operator, &right);
+            let obj = eval_infix_expression(&infix_expr.operator, &left, &right);
+            Ok(obj)
+        }
+        //// literals
+        Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
+            int_literal.value,
+        ))),
         Node::BoolLiteral(bool_literal) => {
             Ok(object::Object::Bool(object::Bool::new(bool_literal.value)))
         }
@@ -66,11 +81,10 @@ fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
 fn eval_prefix_expression(operator: &[ascii::Char], right: &object::Object) -> object::Object {
     match operator.as_str() {
         "!" => eval_exclamation_operator_expression(right),
-        "-" => eval_minus_operator_expression(right),
+        "-" => eval_minus_prefix_operator_expression(right),
         _ => NULL.clone(),
     }
 }
-
 fn eval_exclamation_operator_expression(right: &object::Object) -> object::Object {
     match right {
         object::Object::Bool(bool_obj) => {
@@ -85,7 +99,7 @@ fn eval_exclamation_operator_expression(right: &object::Object) -> object::Objec
     }
 }
 
-fn eval_minus_operator_expression(right: &object::Object) -> object::Object {
+fn eval_minus_prefix_operator_expression(right: &object::Object) -> object::Object {
     if let object::Object::Integer(int_obj) = right {
         object::Object::Integer(object::Integer::new(-int_obj.value))
     } else {
@@ -93,8 +107,48 @@ fn eval_minus_operator_expression(right: &object::Object) -> object::Object {
     }
 }
 
+// infix
+fn eval_infix_expression(
+    operator: &[ascii::Char],
+    left: &object::Object,
+    right: &object::Object,
+) -> object::Object {
+    if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
+        return eval_integer_infix_expression(operator, x, y);
+    }
+
+    match operator.as_str() {
+        "==" => object::Object::Bool(object::Bool::new(*right == *left)),
+        "!=" => object::Object::Bool(object::Bool::new(*right != *left)),
+        _ => {
+            unimplemented!()
+        }
+    }
+}
+
+fn eval_integer_infix_expression(
+    operator: &[ascii::Char],
+    left: &object::Integer,
+    right: &object::Integer,
+) -> object::Object {
+    match operator.as_str() {
+        "+" => object::Object::Integer(object::Integer::new(left.value + right.value)),
+        "-" => object::Object::Integer(object::Integer::new(left.value - right.value)),
+        "*" => object::Object::Integer(object::Integer::new(left.value * right.value)),
+        "/" => object::Object::Integer(object::Integer::new(left.value / right.value)),
+        "<" => object::Object::Bool(object::Bool::new(left.value < right.value)),
+        ">" => object::Object::Bool(object::Bool::new(left.value > right.value)),
+        "==" => object::Object::Bool(object::Bool::new(left.value == right.value)),
+        "!=" => object::Object::Bool(object::Bool::new(left.value != right.value)),
+        _ => NULL.clone(),
+    }
+}
+
 mod test {
     use std::ascii;
+    use std::sync::BarrierWaitResult;
+
+    use anyhow::{Result, anyhow, bail};
 
     use crate::lexer::Lexer;
     use crate::object::{self, Object};
@@ -104,6 +158,7 @@ mod test {
 
     #[test]
     fn test_eval_integer_expression() {
+        #[derive(Debug)]
         struct Test {
             input: Vec<ascii::Char>,
             expected: i64,
@@ -122,11 +177,25 @@ mod test {
             Test::new("10", 10),
             Test::new("-5", -5),
             Test::new("-10", -10),
+            Test::new("5 + 5 + 5 + 5 - 10", 10),
+            Test::new("2 * 2 * 2 * 2 * 2", 32),
+            Test::new("-50 + 100 + -50", 0),
+            Test::new("5 * 2 + 10", 20),
+            Test::new("5 + 2 * 10", 25),
+            Test::new("20 + 2 * -10", 0),
+            Test::new("50 / 2 * 2 + 10", 60),
+            Test::new("2 * (5 + 10)", 30),
+            Test::new("3 * 3 * 3 + 10", 37),
+            Test::new("3 * (3 * 3) + 10", 37),
+            Test::new("(5 + 10 * 2 + 15 / 3) * 2 + -10", 50),
         ];
 
-        for test in tests.iter() {
+        for (i, test) in tests.iter().enumerate() {
             let obj = test_eval(&test.input);
-            test_integer_object(&obj, test.expected);
+            println!("{:?}", test);
+            test_integer_object(&obj, test.expected).unwrap_or_else(|err| {
+                panic!("test {i} failed: {}", err);
+            });
         }
     }
 
@@ -145,7 +214,19 @@ mod test {
             }
         }
 
-        let tests = vec![Test::new("true", true), Test::new("false", false)];
+        let tests = vec![
+            Test::new("true", true),
+            Test::new("false", false),
+            Test::new("true == true", true),
+            Test::new("false == false", true),
+            Test::new("true == false", false),
+            Test::new("true != false", true),
+            Test::new("false != true", true),
+            Test::new("(1 < 2) == true", true),
+            Test::new("(1 < 2) == false", false),
+            Test::new("(1 > 2) == true", false),
+            Test::new("(1 > 2) == false", true),
+        ];
 
         for test in tests.iter() {
             let obj = test_eval(&test.input);
@@ -183,6 +264,23 @@ mod test {
         }
     }
 
+    #[test]
+    fn test_if_else_expressoin() {
+        #[derive(Debug)]
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: Option<int64>,
+        }
+        impl Test {
+            fn new(input: &str, expected: Option<int64>) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+    }
+
     fn test_eval(input: &[ascii::Char]) -> object::Object {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
@@ -196,16 +294,18 @@ mod test {
         })
     }
 
-    fn test_integer_object(obj: &Object, expected: i64) {
+    fn test_integer_object(obj: &Object, expected: i64) -> Result<()> {
         let int_obj = if let Object::Integer(int_obj) = obj {
             int_obj
         } else {
-            panic!("obj is not Integer. got: {obj:?}")
+            bail!("obj is not Integer. got: {obj:?}");
         };
 
         if int_obj.value != expected {
-            panic!("int_obj.value is not {expected}. got: {}", int_obj.value);
+            bail!("int_obj.value is not {expected}. got: {}", int_obj.value);
         }
+
+        Ok(())
     }
 
     fn test_bool_object(obj: &Object, expected: bool) {
@@ -217,6 +317,14 @@ mod test {
 
         if bool_obj.value != expected {
             panic!("bool_obj.value is not {expected}. got: {}", bool_obj.value);
+        }
+    }
+
+    fn test_null_object(obj: &Object) -> Result<()> {
+        if let object::Object::Null(_) = obj {
+            Ok(())
+        } else {
+            bail!("obj is not Null. got: {obj}");
         }
     }
 }
