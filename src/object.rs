@@ -18,6 +18,18 @@ impl Object {
             Object::Null(x) => x,
         }
     }
+
+    pub fn int(val: i64) -> Self {
+        Self::Integer(Integer::new(val))
+    }
+
+    pub fn bool(val: bool) -> Self {
+        Self::Bool(Bool::new(val))
+    }
+
+    pub fn null() -> Self {
+        Self::Null(Null::new())
+    }
 }
 
 impl Display for Object {

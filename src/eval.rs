@@ -3,7 +3,7 @@ use core::ascii;
 use anyhow::{Context, Result, anyhow};
 
 use crate::ast::{Node, NodeInterface};
-use crate::object::{FALSE, NULL, TRUE};
+use crate::object::{FALSE, NULL, Object, TRUE};
 use crate::{ast, object};
 
 pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
@@ -51,6 +51,9 @@ pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<object::Object> {
             let obj = eval_infix_expression(&infix_expr.operator, &left, &right);
             Ok(obj)
         }
+        //// if-else
+        Node::IfExpression(if_expr) => eval_if_expression(if_expr),
+        Node::BlockStatement(block_stmt) => eval_statements(&block_stmt.statements),
         //// literals
         Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
             int_literal.value,
@@ -78,6 +81,7 @@ fn eval_statements(statements: &[ast::Statement]) -> Result<object::Object> {
     unreachable!()
 }
 
+// prefix
 fn eval_prefix_expression(operator: &[ascii::Char], right: &object::Object) -> object::Object {
     match operator.as_str() {
         "!" => eval_exclamation_operator_expression(right),
@@ -85,6 +89,7 @@ fn eval_prefix_expression(operator: &[ascii::Char], right: &object::Object) -> o
         _ => NULL.clone(),
     }
 }
+
 fn eval_exclamation_operator_expression(right: &object::Object) -> object::Object {
     match right {
         object::Object::Bool(bool_obj) => {
@@ -141,6 +146,27 @@ fn eval_integer_infix_expression(
         "==" => object::Object::Bool(object::Bool::new(left.value == right.value)),
         "!=" => object::Object::Bool(object::Bool::new(left.value != right.value)),
         _ => NULL.clone(),
+    }
+}
+
+// if-else
+fn eval_if_expression(if_expr: &ast::IfExpression) -> Result<Object> {
+    let cond_obj = eval(&*if_expr.condition).context("failed to eval expression for condition.")?;
+
+    if is_truethy(&cond_obj) {
+        eval(&if_expr.consequence).context("failed to eval consequence block.")
+    } else if let Some(alt) = &if_expr.alternative {
+        eval(alt).context("failed to eval alternative block.")
+    } else {
+        Ok(NULL.clone())
+    }
+}
+
+fn is_truethy(obj: &object::Object) -> bool {
+    match obj {
+        Object::Bool(b) => b.value,
+        Object::Null(_) => false,
+        _ => true,
     }
 }
 
@@ -269,15 +295,39 @@ mod test {
         #[derive(Debug)]
         struct Test {
             input: Vec<ascii::Char>,
-            expected: Option<int64>,
+            expected: Object,
         }
         impl Test {
-            fn new(input: &str, expected: Option<int64>) -> Self {
+            fn new(input: &str, expected: Object) -> Self {
                 Self {
                     input: input.as_ascii().unwrap().to_vec(),
                     expected,
                 }
             }
+        }
+
+        let tests = vec![
+            Test::new("if (true) { 10 }", object::Object::int(10)),
+            Test::new("if (false) { 10 }", object::Object::null()),
+            Test::new("if (1) { 10 }", object::Object::int(10)),
+            Test::new("if (1 < 2) { 10 }", object::Object::int(10)),
+            Test::new("if (1 > 2) { 10 }", object::Object::null()),
+            Test::new("if (1 > 2) { 10 } else { 20 }", object::Object::int(20)),
+            Test::new("if (1 < 2) { 10 } else { 20 }", object::Object::int(10)),
+        ];
+
+        for (i, test) in tests.iter().enumerate() {
+            let obj = test_eval(&test.input);
+
+            let r = match &test.expected {
+                object::Object::Bool(b) => test_bool_object(&obj, b.value),
+                object::Object::Integer(i) => test_integer_object(&obj, i.value),
+                object::Object::Null(n) => test_null_object(&obj),
+            };
+
+            r.unwrap_or_else(|err| {
+                panic!("test {} failed. got: {}", i, err);
+            });
         }
     }
 
@@ -308,16 +358,18 @@ mod test {
         Ok(())
     }
 
-    fn test_bool_object(obj: &Object, expected: bool) {
+    fn test_bool_object(obj: &Object, expected: bool) -> Result<()> {
         let bool_obj = if let Object::Bool(bool_obj) = obj {
             bool_obj
         } else {
-            panic!("obj is not Bool. got: {obj:?}");
+            bail!("obj is not Bool. got: {obj:?}");
         };
 
         if bool_obj.value != expected {
-            panic!("bool_obj.value is not {expected}. got: {}", bool_obj.value);
+            bail!("bool_obj.value is not {expected}. got: {}", bool_obj.value);
         }
+
+        Ok(())
     }
 
     fn test_null_object(obj: &Object) -> Result<()> {
