@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::io::{Write, stdin, stdout};
+use std::rc::Rc;
 
 use crate::ast::NodeInterface;
 use crate::eval::eval;
@@ -13,7 +15,7 @@ pub fn start() {
     let stdin_ = stdin();
     let mut stdout_ = stdout();
 
-    let mut environment = Environment::new();
+    let environment = Rc::new(RefCell::new(Environment::new(None)));
 
     loop {
         print!("{PROMPT}");
@@ -36,7 +38,7 @@ pub fn start() {
             continue;
         };
 
-        let evaluated = match eval(&program, &mut environment) {
+        let evaluated = match eval(&program, environment.clone()) {
             Ok(x) => x,
             Err(err) => {
                 print_errors("failed to evaluate the program", err);

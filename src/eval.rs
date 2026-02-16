@@ -1,13 +1,18 @@
 use core::ascii;
+use std::cell::RefCell;
 use std::mem::discriminant;
+use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow, bail};
 
 use crate::ast::{Node, NodeInterface};
-use crate::object::{Environment, FALSE, NULL, Object, TRUE};
+use crate::object::{Environment, Object, create_false, create_null, create_true};
 use crate::{ast, object};
 
-pub fn eval<T: ast::NodeInterface>(node: &T, env: &mut Environment) -> Result<object::Object> {
+pub fn eval<T: ast::NodeInterface>(
+    node: &T,
+    env: Rc<RefCell<Environment>>,
+) -> Result<Rc<object::Object>> {
     match node.get_node() {
         // program
         Node::Program(program) => eval_program(program, env),
@@ -21,14 +26,14 @@ pub fn eval<T: ast::NodeInterface>(node: &T, env: &mut Environment) -> Result<ob
         Node::ReturnStatement(ret_stmt) => {
             let value = eval(&ret_stmt.value, env)
                 .context("failed to eval expression for return value.")?;
-            Ok(Object::ret_val(value))
+            Ok(Rc::new(Object::ret_val(value)))
         }
         Node::LetStatement(let_stmt) => {
-            let value = eval(&let_stmt.value, env)
+            let value = eval(&let_stmt.value, env.clone())
                 .context("failed to eval value for let statement.")
                 .context("failed to eval let statement.")?;
-            env.set(let_stmt.name.value.as_str(), value);
-            Ok(NULL.clone())
+            env.borrow_mut().set(let_stmt.name.value.as_str(), value);
+            Ok(create_null())
         }
         // expressions
         //// general expressions
@@ -53,7 +58,7 @@ pub fn eval<T: ast::NodeInterface>(node: &T, env: &mut Environment) -> Result<ob
         }
         //// infix expression
         Node::InfixExpression(infix_expr) => {
-            let left = eval(&*infix_expr.left, env)
+            let left = eval(&*infix_expr.left, env.clone())
                 .context("failed to eval left expression")
                 .context("failed to eval infix expression")?;
             let right = eval(&*infix_expr.right, env)
@@ -67,18 +72,51 @@ pub fn eval<T: ast::NodeInterface>(node: &T, env: &mut Environment) -> Result<ob
         Node::BlockStatement(block_stmt) => eval_block_statement(block_stmt, env),
         //// identifier
         Node::Identifier(ident) => eval_identifier(ident, env),
-        //// literals
-        Node::IntegerLiteral(int_literal) => Ok(object::Object::Integer(object::Integer::new(
-            int_literal.value,
-        ))),
-        Node::BoolLiteral(bool_literal) => {
-            Ok(object::Object::Bool(object::Bool::new(bool_literal.value)))
+        //// function call
+        Node::CallExpression(call_expr) => {
+            let func_obj = eval(&*call_expr.func, env.clone())
+                .context("failed to get function.")
+                .context("failed to eval call expression.")?;
+
+            let func = if let Object::Function(f) = &*func_obj {
+                f
+            } else {
+                return Err(anyhow!(
+                    "object associated with {} is not function.",
+                    call_expr.func.string().as_str()
+                )
+                .context("failed to eval call expression"));
+            };
+
+            let args = eval_expressions(&call_expr.args, env)
+                .context("failed to eval arguments.")
+                .context("failed to eval call expression.")?;
+
+            let func_env = func
+                .create_function_env(&args)
+                .context("failed to create Environment for the function.")
+                .context("failed to eval call expression.")?;
+
+            Ok(unwrap_return_value(
+                eval(&func.body, func_env)
+                    .context("failed to eval body of function.")
+                    .context("failed to eval call expression.")?,
+            ))
         }
-        _ => unimplemented!(),
+
+        //// literals
+        Node::IntegerLiteral(int_literal) => Ok(Rc::new(Object::int(int_literal.value))),
+        Node::BoolLiteral(bool_literal) => Ok(Rc::new(Object::bool(bool_literal.value))),
+        Node::FunctionLiteral(func_literal) => {
+            Ok(Rc::new(Object::from_func_litereal(func_literal, env)))
+        }
     }
 }
 
-fn eval_program(program: &ast::Program, env: &mut Environment) -> Result<object::Object> {
+fn eval_program(
+    program: &ast::Program,
+    env: Rc<RefCell<Environment>>,
+) -> Result<Rc<object::Object>> {
     let stmts = &program.statements;
 
     if stmts.is_empty() {
@@ -86,10 +124,10 @@ fn eval_program(program: &ast::Program, env: &mut Environment) -> Result<object:
     }
 
     for (i, stmt) in stmts.iter().enumerate() {
-        let result = eval(stmt, env).context("failed to evaluate a statement.")?;
+        let result = eval(stmt, env.clone()).context("failed to evaluate a statement.")?;
 
-        if let Object::ReturnValue(ret_value) = result {
-            return Ok((*ret_value.value).clone());
+        if let Object::ReturnValue(ret_value) = &*result {
+            return Ok(ret_value.value.clone());
         }
 
         if i == stmts.len() - 1 {
@@ -102,8 +140,8 @@ fn eval_program(program: &ast::Program, env: &mut Environment) -> Result<object:
 
 fn eval_block_statement(
     block_stmt: &ast::BlockStatement,
-    env: &mut Environment,
-) -> Result<object::Object> {
+    env: Rc<RefCell<Environment>>,
+) -> Result<Rc<Object>> {
     let stmts = &block_stmt.statements;
 
     if stmts.is_empty() {
@@ -111,7 +149,7 @@ fn eval_block_statement(
     }
 
     for (i, stmt) in stmts.iter().enumerate() {
-        let result = eval(stmt, env).context("failed to evaluate a statement.")?;
+        let result = eval(stmt, env.clone()).context("failed to evaluate a statement.")?;
 
         if i == stmts.len() - 1 || result.is_returned() {
             return Ok(result);
@@ -121,16 +159,19 @@ fn eval_block_statement(
     unreachable!()
 }
 
-fn eval_statements(statements: &[ast::Statement], env: &mut Environment) -> Result<object::Object> {
+fn eval_statements(
+    statements: &[ast::Statement],
+    env: Rc<RefCell<Environment>>,
+) -> Result<Rc<Object>> {
     if statements.is_empty() {
         return Err(anyhow!("statements is empty."));
     }
 
     for (i, stmt) in statements.iter().enumerate() {
-        let result = eval(stmt, env).context("failed to evaluate a statement.")?;
+        let result = eval(stmt, env.clone()).context("failed to evaluate a statement.")?;
 
-        if let Object::ReturnValue(ret_value) = result {
-            return Ok((*ret_value.value).clone());
+        if let Object::ReturnValue(ret_value) = &*result {
+            return Ok(ret_value.value.clone());
         }
 
         if i == statements.len() - 1 {
@@ -145,7 +186,7 @@ fn eval_statements(statements: &[ast::Statement], env: &mut Environment) -> Resu
 fn eval_prefix_expression(
     operator: &[ascii::Char],
     right: &object::Object,
-) -> Result<object::Object> {
+) -> Result<Rc<object::Object>> {
     match operator.as_str() {
         "!" => Ok(eval_exclamation_operator_expression(right)),
         "-" => Ok(eval_minus_prefix_operator_expression(right)
@@ -154,25 +195,23 @@ fn eval_prefix_expression(
     }
 }
 
-fn eval_exclamation_operator_expression(right: &object::Object) -> object::Object {
+fn eval_exclamation_operator_expression(right: &object::Object) -> Rc<object::Object> {
     match right {
         object::Object::Bool(bool_obj) => {
             if bool_obj.value {
-                FALSE.clone()
+                create_false()
             } else {
-                TRUE.clone()
+                create_true()
             }
         }
-        object::Object::Null(_) => TRUE.clone(),
-        _ => FALSE.clone(),
+        object::Object::Null(_) => create_true(),
+        _ => create_false(),
     }
 }
 
-fn eval_minus_prefix_operator_expression(right: &object::Object) -> Result<object::Object> {
+fn eval_minus_prefix_operator_expression(right: &object::Object) -> Result<Rc<object::Object>> {
     if let object::Object::Integer(int_obj) = right {
-        return Ok(object::Object::Integer(object::Integer::new(
-            -int_obj.value,
-        )));
+        return Ok(Rc::new(Object::int(-int_obj.value)));
     }
 
     bail!("minus is not prefix operator for {}.", right);
@@ -183,15 +222,15 @@ fn eval_infix_expression(
     operator: &[ascii::Char],
     left: &object::Object,
     right: &object::Object,
-) -> Result<object::Object> {
+) -> Result<Rc<object::Object>> {
     // 型が違う場合はエラー
     if discriminant(left) != discriminant(right) {
         bail!("type mismatch: {left:?} {} {right:?}", operator.as_str());
     }
 
     match operator.as_str() {
-        "==" => Ok(object::Object::Bool(object::Bool::new(*right == *left))),
-        "!=" => Ok(object::Object::Bool(object::Bool::new(*right != *left))),
+        "==" => Ok(Rc::new(Object::bool(*right == *left))),
+        "!=" => Ok(Rc::new(Object::bool(*right != *left))),
         _ => {
             if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
                 return eval_integer_infix_expression(operator, x, y)
@@ -207,36 +246,39 @@ fn eval_integer_infix_expression(
     operator: &[ascii::Char],
     left: &object::Integer,
     right: &object::Integer,
-) -> Result<object::Object> {
+) -> Result<Rc<object::Object>> {
     match operator.as_str() {
-        "+" => Ok(object::Object::int(left.value + right.value)),
-        "-" => Ok(object::Object::int(left.value - right.value)),
-        "*" => Ok(object::Object::int(left.value * right.value)),
-        "/" => Ok(object::Object::int(left.value / right.value)),
-        "<" => Ok(object::Object::bool(left.value < right.value)),
-        ">" => Ok(object::Object::bool(left.value > right.value)),
-        "==" => Ok(object::Object::bool(left.value == right.value)),
-        "!=" => Ok(object::Object::bool(left.value != right.value)),
+        "+" => Ok(Rc::new(Object::int(left.value + right.value))),
+        "-" => Ok(Rc::new(Object::int(left.value - right.value))),
+        "*" => Ok(Rc::new(Object::int(left.value * right.value))),
+        "/" => Ok(Rc::new(Object::int(left.value / right.value))),
+        "<" => Ok(Rc::new(Object::bool(left.value < right.value))),
+        ">" => Ok(Rc::new(Object::bool(left.value > right.value))),
+        "==" => Ok(Rc::new(Object::bool(left.value == right.value))),
+        "!=" => Ok(Rc::new(Object::bool(left.value != right.value))),
         _ => bail!("unknown operator: {}.", operator.as_str()),
     }
 }
 
 // if-else
-fn eval_if_expression(if_expr: &ast::IfExpression, env: &mut Environment) -> Result<Object> {
-    let cond_obj =
-        eval(&*if_expr.condition, env).context("failed to eval expression for condition.")?;
+fn eval_if_expression(
+    if_expr: &ast::IfExpression,
+    env: Rc<RefCell<Environment>>,
+) -> Result<Rc<Object>> {
+    let cond_obj = eval(&*if_expr.condition, env.clone())
+        .context("failed to eval expression for condition.")?;
 
-    if is_truethy(&cond_obj) {
+    if is_truethy(cond_obj) {
         eval(&if_expr.consequence, env).context("failed to eval consequence block.")
     } else if let Some(alt) = &if_expr.alternative {
-        eval(alt, env).context("failed to eval alternative block.")
+        eval(alt, env.clone()).context("failed to eval alternative block.")
     } else {
-        Ok(NULL.clone())
+        Ok(create_null())
     }
 }
 
-fn is_truethy(obj: &object::Object) -> bool {
-    match obj {
+fn is_truethy(obj: Rc<object::Object>) -> bool {
+    match &*obj {
         Object::Bool(b) => b.value,
         Object::Null(_) => false,
         _ => true,
@@ -244,20 +286,48 @@ fn is_truethy(obj: &object::Object) -> bool {
 }
 
 // let
-fn eval_identifier(ident: &ast::Identifier, env: &Environment) -> Result<Object> {
-    if let Some(value) = env.get(ident.value.as_str()) {
-        return Ok(value.clone());
+fn eval_identifier(ident: &ast::Identifier, env: Rc<RefCell<Environment>>) -> Result<Rc<Object>> {
+    if let Some(value) = env.borrow().get(ident.value.as_str()) {
+        return Ok(value);
     }
 
     bail!("identifier not found: {}", ident.value.as_str());
 }
 
+//
+fn eval_expressions(
+    expressions: &[ast::Expression],
+    env: Rc<RefCell<Environment>>,
+) -> Result<Vec<Rc<Object>>> {
+    let mut objs = Vec::new();
+
+    for (i, expr) in expressions.iter().enumerate() {
+        let evaluated =
+            eval(expr, env.clone()).with_context(|| format!("failed to eval expression {i}"))?;
+
+        objs.push(evaluated);
+    }
+
+    Ok(objs)
+}
+
+//
+fn unwrap_return_value(obj: Rc<Object>) -> Rc<Object> {
+    match &*obj {
+        Object::ReturnValue(r) => r.value.clone(),
+        _ => obj,
+    }
+}
+
 mod test {
     use std::ascii;
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::BarrierWaitResult;
 
     use anyhow::{Result, anyhow, bail};
 
+    use crate::ast::NodeInterface;
     use crate::lexer::Lexer;
     use crate::object::{self, Environment, Object};
     use crate::parser::Parser;
@@ -405,6 +475,7 @@ mod test {
                 object::Object::Bool(b) => test_bool_object(&obj, b.value),
                 object::Object::Integer(i) => test_integer_object(&obj, i.value),
                 object::Object::Null(n) => test_null_object(&obj),
+                object::Object::Function(f) => unimplemented!(),
                 object::Object::ReturnValue(_) => panic!("program returned ReturnValue."),
             };
 
@@ -484,16 +555,94 @@ mod test {
         }
     }
 
-    fn test_eval(input: &[ascii::Char]) -> object::Object {
+    #[test]
+    fn test_function_object() {
+        let input = "fn(x) { x + 2; };".as_ascii().unwrap();
+
+        let evaluated = &*test_eval(input);
+
+        let fn_obj = if let Object::Function(x) = evaluated {
+            x
+        } else {
+            panic!("object is not Function. got: {evaluated:?}");
+        };
+
+        if fn_obj.params.len() != 1 {
+            panic!("number of parameter for function is wrong.");
+        }
+
+        if fn_obj.params[0].string().as_str() != "x" {
+            panic!("parameter is not 'x'");
+        }
+
+        let expected_body = "(x + 2)";
+
+        if fn_obj.body.string().as_str() != expected_body {
+            panic!("body is not {expected_body}. got: {}", fn_obj);
+        }
+    }
+
+    #[test]
+    fn test_function_application() {
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: i64,
+        }
+        impl Test {
+            fn new(input: &str, expected: i64) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+
+        let tests = vec![
+            Test::new("let identity = fn(x) { x; }; identity(5);", 5),
+            Test::new("let identity = fn(x) { return x; }; identity(5);", 5),
+            Test::new("let double = fn(x) { x * 2; }; double(5);", 10),
+            Test::new("let add = fn(x, y) { x + y; }; add(5, 5);", 10),
+            Test::new("let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", 20),
+            Test::new("fn(x) { x; }(5)", 5),
+        ];
+
+        for (i, test) in tests.iter().enumerate() {
+            test_integer_object(&test_eval(&test.input), test.expected).unwrap_or_else(|err| {
+                print_errors("test {i} failed", err);
+                panic!();
+            });
+        }
+    }
+
+    #[test]
+    fn test_closures() {
+        let input = "
+            let newAdder = fn(x) {
+              fn(y) { x + y };
+            };
+
+            let addTwo = newAdder(2);
+            addTwo(2);
+            "
+        .as_ascii()
+        .unwrap();
+
+        test_integer_object(&*test_eval(input), 4).unwrap_or_else(|err| {
+            print_errors("test failed.", err);
+            panic!()
+        });
+    }
+
+    fn test_eval(input: &[ascii::Char]) -> Rc<object::Object> {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
         let program = parser.parse_program().unwrap_or_else(|_| {
             parser.print_errors();
             panic!("failed to parse.");
         });
-        let mut env = Environment::new();
+        let env = Environment::new(None);
 
-        eval(&program, &mut env).unwrap_or_else(|e| {
+        eval(&program, Rc::new(RefCell::new(env))).unwrap_or_else(|e| {
             print_errors("failed to evaluate", e);
             panic!()
         })

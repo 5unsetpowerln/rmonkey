@@ -1,7 +1,7 @@
 use core::ascii;
 use std::fmt::{Debug, Display};
 
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TokenKind {
     Illegal,
     Eof,
@@ -42,7 +42,7 @@ pub enum TokenKind {
     Return,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Token {
     pub kind: TokenKind,
     pub literal: Vec<ascii::Char>,

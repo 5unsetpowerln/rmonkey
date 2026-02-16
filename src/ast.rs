@@ -30,7 +30,7 @@ pub trait NodeInterface {
 }
 
 // Expression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expression {
     Identifier(Identifier),
     IntegerLiteral(IntegerLiteral),
@@ -81,7 +81,7 @@ impl NodeInterface for Expression {
 }
 
 // Identifier
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Identifier {
     pub token: Token,
     pub value: Vec<ascii::Char>,
@@ -116,7 +116,7 @@ impl NodeInterface for Identifier {
 }
 
 // IntegerLiteral
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntegerLiteral {
     pub token: Token,
     pub value: i64,
@@ -143,7 +143,7 @@ impl NodeInterface for IntegerLiteral {
 }
 
 // Boolean
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoolLiteral {
     pub token: Token,
     pub value: bool,
@@ -169,7 +169,7 @@ impl NodeInterface for BoolLiteral {
 }
 
 // PrefixExpression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrefixExpression {
     pub token: Token,
     pub operator: Vec<ascii::Char>,
@@ -215,7 +215,7 @@ impl NodeInterface for PrefixExpression {
 }
 
 // InfixExpression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InfixExpression {
     pub token: Token,
     pub operator: Vec<ascii::Char>,
@@ -262,7 +262,7 @@ impl NodeInterface for InfixExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IfExpression {
     pub token: Token,
     pub condition: Box<Expression>,
@@ -312,7 +312,7 @@ impl NodeInterface for IfExpression {
 }
 
 // FunctionLiteral
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionLiteral {
     pub token: Token,
     pub params: Vec<Identifier>,
@@ -356,7 +356,7 @@ impl NodeInterface for FunctionLiteral {
 }
 
 // CallExpression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallExpression {
     pub token: Token,
     pub func: Box<Expression>,
@@ -400,7 +400,7 @@ impl NodeInterface for CallExpression {
 }
 
 // BlockStatement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockStatement {
     pub token: Token, // {
     pub statements: Vec<Statement>,
@@ -433,7 +433,7 @@ impl NodeInterface for BlockStatement {
 }
 
 // Statement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Let(LetStatement),
     Return(ReturnStatement),
@@ -462,7 +462,7 @@ impl NodeInterface for Statement {
 }
 
 // LetStatement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LetStatement {
     pub token: Token,
     pub name: Identifier,
@@ -510,7 +510,7 @@ impl NodeInterface for LetStatement {
 }
 
 // ReturnStatement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReturnStatement {
     pub token: Token,
     pub value: Expression,
@@ -552,7 +552,7 @@ impl NodeInterface for ReturnStatement {
 }
 
 // ExpressionStatement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpressionStatement {
     pub token: Token,
     pub value: Expression,
