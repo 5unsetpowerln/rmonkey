@@ -2,6 +2,7 @@
 #![feature(ascii_char_variants)]
 
 mod ast;
+mod builtins;
 mod eval;
 mod lexer;
 mod object;

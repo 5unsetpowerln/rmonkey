@@ -18,6 +18,7 @@ pub enum Object {
     Function(Rc<Function>),
     ReturnValue(Rc<ReturnValue>),
     String(Rc<StringObject>),
+    Builtin(Rc<Builtin>),
 }
 
 impl Object {
@@ -29,6 +30,7 @@ impl Object {
             Object::ReturnValue(x) => x.clone(),
             Object::Function(x) => x.clone(),
             Object::String(x) => x.clone(),
+            Object::Builtin(x) => x.clone(),
         }
     }
 
@@ -46,6 +48,10 @@ impl Object {
 
     pub fn str(value: &[ascii::Char]) -> Self {
         Self::String(Rc::new(StringObject::new(value)))
+    }
+
+    pub fn builtin(func: BuiltinFunction) -> Self {
+        Self::Builtin(Rc::new(Builtin::new(func)))
     }
 
     pub fn from_func_litereal(literal: &FunctionLiteral, env: Rc<RefCell<Environment>>) -> Self {
@@ -227,6 +233,28 @@ impl Display for Function {
         write!(f, "{buffer}")
     }
 }
+
+// Builtin
+pub type BuiltinFunction = fn(&[Rc<Object>]) -> Result<Rc<Object>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Builtin {
+    pub func: BuiltinFunction,
+}
+
+impl Builtin {
+    pub fn new(func: BuiltinFunction) -> Self {
+        Self { func }
+    }
+}
+
+impl Display for Builtin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "builtin function")
+    }
+}
+
+impl ObjectInterface for Builtin {}
 
 // helper constants
 pub fn create_true() -> Rc<Object> {
