@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::mem::discriminant;
 use std::rc::Rc;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::ast::{Node, NodeInterface};
 use crate::object::{Environment, Object, create_false, create_null, create_true};
@@ -240,6 +240,11 @@ fn eval_infix_expression(
                     .context("failed to eval infix expression for integers.");
             }
 
+            if let (Object::String(x), Object::String(y)) = (left, right) {
+                return eval_string_infix_expression(operator, x, y)
+                    .context("failed to eval infix expression for string.");
+            }
+
             bail!("unknown operator: {}", operator.as_str());
         }
     }
@@ -261,6 +266,24 @@ fn eval_integer_infix_expression(
         "!=" => Ok(Rc::new(Object::bool(left.value != right.value))),
         _ => bail!("unknown operator: {}.", operator.as_str()),
     }
+}
+
+fn eval_string_infix_expression(
+    operator: &[ascii::Char],
+    left: &object::StringObject,
+    right: &object::StringObject,
+) -> Result<Rc<Object>> {
+    ensure!(
+        operator.as_str() == "+",
+        "unknown operator: {}",
+        operator.as_str()
+    );
+
+    Ok(Rc::new(Object::str(
+        format!("{}{}", left.value.as_str(), right.value.as_str())
+            .as_ascii()
+            .unwrap(),
+    )))
 }
 
 // if-else
@@ -643,16 +666,36 @@ mod test {
 
         let evaluated = &*test_eval(input);
 
-        let literal = if let Object::String(l) = evaluated {
+        let str_obj = if let Object::String(l) = evaluated {
             l
         } else {
             panic!("object is not StringLiteral");
         };
 
-        if literal.value.as_str() != "Hello World!" {
+        if str_obj.value.as_str() != "Hello World!" {
             panic!(
                 "literal.value is not \"Hello World!\". got: {}",
-                literal.value.as_str()
+                str_obj.value.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn test_string_concatenation() {
+        let input = "\"Hello\" + \" \" + \"World!\"".as_ascii().unwrap();
+
+        let evaluated = &*test_eval(input);
+
+        let str_obj = if let Object::String(l) = evaluated {
+            l
+        } else {
+            panic!("object is not StringLiteral");
+        };
+
+        if str_obj.value.as_str() != "Hello World!" {
+            panic!(
+                "literal.value is not \"Hello World!\". got: {}",
+                str_obj.value.as_str()
             );
         }
     }
