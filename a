@@ -1,0 +1,9 @@
+let b = fn(x) {
+  if (x > 10) {
+    return "greater than 10";
+  }
+  if (x < 10) {
+    return "less than 10";
+  }
+  return "equal to 10"
+}

@@ -46,6 +46,7 @@ pub fn eval<T: ast::NodeInterface>(
             ast::Expression::Infix(x) => eval(x, env),
             ast::Expression::IntegerLiteral(x) => eval(x, env),
             ast::Expression::Prefix(x) => eval(x, env),
+            ast::Expression::StringLiteral(x) => eval(x, env),
         },
         //// prefix expression
         Node::PrefixExpression(prefix_expr) => {
@@ -110,6 +111,8 @@ pub fn eval<T: ast::NodeInterface>(
         Node::FunctionLiteral(func_literal) => {
             Ok(Rc::new(Object::from_func_litereal(func_literal, env)))
         }
+        Node::StringLiteral(literal) => Ok(Rc::new(Object::str(&literal.value))),
+        _ => unimplemented!(),
     }
 }
 
@@ -476,6 +479,7 @@ mod test {
                 object::Object::Integer(i) => test_integer_object(&obj, i.value),
                 object::Object::Null(n) => test_null_object(&obj),
                 object::Object::Function(f) => unimplemented!(),
+                object::Object::String(s) => unimplemented!(),
                 object::Object::ReturnValue(_) => panic!("program returned ReturnValue."),
             };
 
@@ -631,6 +635,26 @@ mod test {
             print_errors("test failed.", err);
             panic!()
         });
+    }
+
+    #[test]
+    fn test_string_literal() {
+        let input = "\"Hello World!\"".as_ascii().unwrap();
+
+        let evaluated = &*test_eval(input);
+
+        let literal = if let Object::String(l) = evaluated {
+            l
+        } else {
+            panic!("object is not StringLiteral");
+        };
+
+        if literal.value.as_str() != "Hello World!" {
+            panic!(
+                "literal.value is not \"Hello World!\". got: {}",
+                literal.value.as_str()
+            );
+        }
     }
 
     fn test_eval(input: &[ascii::Char]) -> Rc<object::Object> {

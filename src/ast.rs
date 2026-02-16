@@ -19,6 +19,7 @@ pub enum Node<'a> {
     ReturnStatement(&'a ReturnStatement),
     ExpressionStatement(&'a ExpressionStatement),
     Program(&'a Program),
+    StringLiteral(&'a StringLiteral),
 }
 
 pub trait NodeInterface {
@@ -40,11 +41,26 @@ pub enum Expression {
     If(IfExpression),
     Function(FunctionLiteral),
     Call(CallExpression),
+    StringLiteral(StringLiteral),
 }
 
 impl Expression {
     pub fn empty() -> Self {
         Self::Identifier(Identifier::empty())
+    }
+
+    fn as_node_interface(&self) -> &dyn NodeInterface {
+        match self {
+            Self::Identifier(x) => x,
+            Self::IntegerLiteral(x) => x,
+            Self::BoolLiteral(x) => x,
+            Self::Call(x) => x,
+            Self::Function(x) => x,
+            Self::If(x) => x,
+            Self::Infix(x) => x,
+            Self::Prefix(x) => x,
+            Self::StringLiteral(x) => x,
+        }
     }
 }
 
@@ -54,29 +70,11 @@ impl NodeInterface for Expression {
     }
 
     fn token_literal(&self) -> Vec<ascii::Char> {
-        match self {
-            Self::Identifier(expr) => expr.token_literal(),
-            Self::IntegerLiteral(expr) => expr.token_literal(),
-            Self::Prefix(expr) => expr.token_literal(),
-            Self::Infix(expr) => expr.token_literal(),
-            Self::BoolLiteral(expr) => expr.token_literal(),
-            Self::If(expr) => expr.token_literal(),
-            Self::Function(expr) => expr.token_literal(),
-            Self::Call(expr) => expr.token_literal(),
-        }
+        self.as_node_interface().token_literal()
     }
 
     fn string(&self) -> Vec<ascii::Char> {
-        match self {
-            Self::Identifier(expr) => expr.string(),
-            Self::IntegerLiteral(expr) => expr.string(),
-            Self::Prefix(expr) => expr.string(),
-            Self::Infix(expr) => expr.string(),
-            Self::BoolLiteral(expr) => expr.string(),
-            Self::If(expr) => expr.string(),
-            Self::Function(expr) => expr.string(),
-            Self::Call(expr) => expr.string(),
-        }
+        self.as_node_interface().string()
     }
 }
 
@@ -165,6 +163,40 @@ impl NodeInterface for BoolLiteral {
     }
     fn string(&self) -> Vec<ascii::Char> {
         self.token_literal()
+    }
+}
+
+// StringLiteral
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StringLiteral {
+    pub token: Token,
+    pub value: Vec<ascii::Char>,
+}
+
+impl StringLiteral {
+    pub fn new(token: Token, value: &[ascii::Char]) -> Self {
+        Self {
+            token,
+            value: value.to_vec(),
+        }
+    }
+}
+
+impl NodeInterface for StringLiteral {
+    fn get_node(&self) -> Node {
+        Node::StringLiteral(self)
+    }
+
+    fn token_literal(&self) -> Vec<ascii::Char> {
+        self.token.literal.clone()
+    }
+
+    fn string(&self) -> Vec<ascii::Char> {
+        let mut buffer = Vec::new();
+        buffer.push(ascii::Char::QuotationMark);
+        buffer.extend(&self.value);
+        buffer.push(ascii::Char::QuotationMark);
+        buffer
     }
 }
 

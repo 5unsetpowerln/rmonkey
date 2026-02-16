@@ -1,7 +1,4 @@
 use core::ascii;
-use std::str::FromStr;
-
-use anyhow::{Context, Result};
 
 use crate::token::{Token, TokenKind};
 
@@ -82,6 +79,7 @@ impl Lexer {
             ascii::Char::RightCurlyBracket => {
                 Token::new(TokenKind::RightBrace, unsafe { "}".as_ascii_unchecked() })
             }
+            ascii::Char::QuotationMark => Token::new(TokenKind::String, &self.read_string()),
             _ => {
                 if is_letter(self.c) {
                     // a~z/A~Z/_から始まる場合はidentifier/keywordとして解釈する
@@ -126,6 +124,19 @@ impl Lexer {
         self.read_char();
 
         token
+    }
+
+    fn read_string(&mut self) -> Vec<ascii::Char> {
+        let position = self.position + 1;
+
+        loop {
+            self.read_char();
+            if self.c == ascii::Char::QuotationMark || self.c == ascii::Char::Null {
+                break;
+            }
+        }
+
+        self.input[position..self.position].to_vec()
     }
 
     fn read_char(&mut self) {
@@ -220,6 +231,19 @@ mod test {
             };
 
             let result = add(five, ten);
+            !-/*5;
+            5 < 10 > 5;
+
+            if (5 < 10) {
+                return true;
+            } else {
+                return false;
+            }
+
+            10 == 10;
+            10 != 9;
+            \"foobar\"
+            \"foo bar\"
             "
         .as_ascii()
         .unwrap();
@@ -261,6 +285,45 @@ mod test {
             Test::new(TokenKind::Ident, "ten"),
             Test::new(TokenKind::RightParen, ")"),
             Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::Exclamation, "!"),
+            Test::new(TokenKind::Minus, "-"),
+            Test::new(TokenKind::Slash, "/"),
+            Test::new(TokenKind::Asterisk, "*"),
+            Test::new(TokenKind::Int, "5"),
+            Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::Int, "5"),
+            Test::new(TokenKind::LessThan, "<"),
+            Test::new(TokenKind::Int, "10"),
+            Test::new(TokenKind::GreaterThan, ">"),
+            Test::new(TokenKind::Int, "5"),
+            Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::If, "if"),
+            Test::new(TokenKind::LeftParen, "("),
+            Test::new(TokenKind::Int, "5"),
+            Test::new(TokenKind::LessThan, "<"),
+            Test::new(TokenKind::Int, "10"),
+            Test::new(TokenKind::RightParen, ")"),
+            Test::new(TokenKind::LeftBrace, "{"),
+            Test::new(TokenKind::Return, "return"),
+            Test::new(TokenKind::True, "true"),
+            Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::RightBrace, "}"),
+            Test::new(TokenKind::Else, "else"),
+            Test::new(TokenKind::LeftBrace, "{"),
+            Test::new(TokenKind::Return, "return"),
+            Test::new(TokenKind::False, "false"),
+            Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::RightBrace, "}"),
+            Test::new(TokenKind::Int, "10"),
+            Test::new(TokenKind::Eq, "=="),
+            Test::new(TokenKind::Int, "10"),
+            Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::Int, "10"),
+            Test::new(TokenKind::NotEq, "!="),
+            Test::new(TokenKind::Int, "9"),
+            Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::String, "foobar"),
+            Test::new(TokenKind::String, "foo bar"),
             Test::new(TokenKind::Eof, "\0"),
         ];
 

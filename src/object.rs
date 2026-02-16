@@ -1,3 +1,4 @@
+use std::ascii;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
@@ -16,6 +17,7 @@ pub enum Object {
     Null(Rc<Null>),
     Function(Rc<Function>),
     ReturnValue(Rc<ReturnValue>),
+    String(Rc<StringObject>),
 }
 
 impl Object {
@@ -26,6 +28,7 @@ impl Object {
             Object::Null(x) => x.clone(),
             Object::ReturnValue(x) => x.clone(),
             Object::Function(x) => x.clone(),
+            Object::String(x) => x.clone(),
         }
     }
 
@@ -39,6 +42,10 @@ impl Object {
 
     pub fn null() -> Self {
         Self::Null(Rc::new(Null::new()))
+    }
+
+    pub fn str(value: &[ascii::Char]) -> Self {
+        Self::String(Rc::new(StringObject::new(value)))
     }
 
     pub fn from_func_litereal(literal: &FunctionLiteral, env: Rc<RefCell<Environment>>) -> Self {
@@ -117,6 +124,28 @@ impl Display for Null {
 }
 
 impl ObjectInterface for Null {}
+
+// String
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StringObject {
+    pub value: Vec<ascii::Char>,
+}
+
+impl StringObject {
+    pub fn new(value: &[ascii::Char]) -> Self {
+        Self {
+            value: value.to_vec(),
+        }
+    }
+}
+
+impl Display for StringObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value.as_str())
+    }
+}
+
+impl ObjectInterface for StringObject {}
 
 // ReturnValue
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2,13 +2,11 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use anyhow::{Context, Result, anyhow, ensure};
-use log::error;
-use thiserror::Error;
 
 use crate::ast::{
     BlockStatement, BoolLiteral, CallExpression, Expression, ExpressionStatement, FunctionLiteral,
     Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement, PrefixExpression,
-    Program, ReturnStatement, Statement,
+    Program, ReturnStatement, Statement, StringLiteral,
 };
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
@@ -83,6 +81,7 @@ impl<'a> Parser<'a> {
         parser.register_prefix(TokenKind::LeftParen, Self::parse_grouped_expression);
         parser.register_prefix(TokenKind::If, Self::parse_if_expression);
         parser.register_prefix(TokenKind::Function, Self::parse_function_literal);
+        parser.register_prefix(TokenKind::String, Self::parse_string_literal);
 
         parser.register_prefix(TokenKind::Minus, Self::parse_prefix_expression);
         parser.register_prefix(TokenKind::Exclamation, Self::parse_prefix_expression);
@@ -277,6 +276,13 @@ impl<'a> Parser<'a> {
         Ok(Expression::BoolLiteral(BoolLiteral::new(
             self.current_token.clone(),
             value,
+        )))
+    }
+
+    fn parse_string_literal(&mut self) -> Result<Expression> {
+        Ok(Expression::StringLiteral(StringLiteral::new(
+            self.current_token.clone(),
+            &self.current_token.literal,
         )))
     }
 
@@ -1449,6 +1455,53 @@ mod test {
             "+".as_ascii().unwrap(),
             &LiteralForTest::ident("y"),
         );
+    }
+
+    #[test]
+    fn test_string_literal_expression() {
+        let input = "\"hello world\";".as_ascii().unwrap();
+
+        let mut lexer = Lexer::new(input);
+        let mut parser = Parser::new(&mut lexer);
+
+        let program = parser.parse_program().unwrap_or_else(|_| {
+            parser.print_errors();
+            panic!("failed to parse program.");
+        });
+
+        if program.statements.len() != 1 {
+            panic!(
+                "number of statement of program is not 1. got: {}",
+                program.statements.len()
+            );
+        }
+
+        let stmt = &program.statements[0];
+
+        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
+            expr_stmt
+        } else {
+            panic!(
+                "stmt is not ExpressoinStatement. got: {}",
+                stmt.string().as_str()
+            );
+        };
+
+        let string_literal = if let Expression::StringLiteral(s) = &expr_stmt.value {
+            s
+        } else {
+            panic!(
+                "expr_stmt.value is not StringLiteral. got: {:?}",
+                &expr_stmt.value
+            );
+        };
+
+        if string_literal.value.as_str() != "hello world" {
+            panic!(
+                "string_literal.value is not \"hello world\". got: {}",
+                string_literal.value.as_str()
+            );
+        }
     }
 
     #[test]
