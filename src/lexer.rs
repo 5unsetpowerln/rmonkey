@@ -80,6 +80,12 @@ impl Lexer {
                 Token::new(TokenKind::RightBrace, unsafe { "}".as_ascii_unchecked() })
             }
             ascii::Char::QuotationMark => Token::new(TokenKind::String, &self.read_string()),
+            ascii::Char::LeftSquareBracket => {
+                Token::new(TokenKind::LeftBracket, "[".as_ascii().unwrap())
+            }
+            ascii::Char::RightSquareBracket => {
+                Token::new(TokenKind::RightBracket, "]".as_ascii().unwrap())
+            }
             _ => {
                 if is_letter(self.c) {
                     // a~z/A~Z/_から始まる場合はidentifier/keywordとして解釈する
@@ -244,6 +250,7 @@ mod test {
             10 != 9;
             \"foobar\"
             \"foo bar\"
+            [1, 2];
             "
         .as_ascii()
         .unwrap();
@@ -324,6 +331,12 @@ mod test {
             Test::new(TokenKind::Semicolon, ";"),
             Test::new(TokenKind::String, "foobar"),
             Test::new(TokenKind::String, "foo bar"),
+            Test::new(TokenKind::LeftBracket, "["),
+            Test::new(TokenKind::Int, "1"),
+            Test::new(TokenKind::Comma, ","),
+            Test::new(TokenKind::Int, "2"),
+            Test::new(TokenKind::RightBracket, "]"),
+            Test::new(TokenKind::Semicolon, ";"),
             Test::new(TokenKind::Eof, "\0"),
         ];
 

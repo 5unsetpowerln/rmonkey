@@ -4,9 +4,9 @@ use std::sync::LazyLock;
 use anyhow::{Context, Result, anyhow, ensure};
 
 use crate::ast::{
-    BlockStatement, BoolLiteral, CallExpression, Expression, ExpressionStatement, FunctionLiteral,
-    Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement, PrefixExpression,
-    Program, ReturnStatement, Statement, StringLiteral,
+    ArrayLiteral, BlockStatement, BoolLiteral, CallExpression, Expression, ExpressionStatement,
+    FunctionLiteral, Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement,
+    PrefixExpression, Program, ReturnStatement, Statement, StringLiteral,
 };
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
@@ -82,6 +82,7 @@ impl<'a> Parser<'a> {
         parser.register_prefix(TokenKind::If, Self::parse_if_expression);
         parser.register_prefix(TokenKind::Function, Self::parse_function_literal);
         parser.register_prefix(TokenKind::String, Self::parse_string_literal);
+        parser.register_prefix(TokenKind::LeftBracket, Self::parse_array_literal);
 
         parser.register_prefix(TokenKind::Minus, Self::parse_prefix_expression);
         parser.register_prefix(TokenKind::Exclamation, Self::parse_prefix_expression);
@@ -286,6 +287,18 @@ impl<'a> Parser<'a> {
         )))
     }
 
+    fn parse_array_literal(&mut self) -> Result<Expression> {
+        let token = self.current_token.clone();
+
+        let expr_list = self
+            .parse_expression_list(TokenKind::RightBracket)
+            .context("failed to parse expression list.")?;
+
+        Ok(Expression::ArrayLiteral(ArrayLiteral::new(
+            token, &expr_list,
+        )))
+    }
+
     fn parse_grouped_expression(&mut self) -> Result<Expression> {
         self.next_token();
 
@@ -443,45 +456,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call_expression(&mut self, left: Expression) -> Result<Expression> {
-        Ok(Expression::Call(CallExpression::new(
-            self.current_token.clone(),
-            left,
-            &self
-                .parse_call_args()
-                .context("failed to parse call args.")?,
-        )))
-    }
+        let token = self.current_token.clone();
 
-    fn parse_call_args(&mut self) -> Result<Vec<Expression>> {
-        let mut args = Vec::new();
+        let args = self
+            .parse_expression_list(TokenKind::RightParen)
+            .context("failed to parse arguments.")?;
 
-        if self.peek_token_is(TokenKind::RightParen) {
-            return Ok(args);
-        }
-
-        self.next_token();
-        args.push(
-            self.parse_expression(OperationPrecedences::Lowest)
-                .context("failed to parse an expression in call args")?,
-        );
-
-        while self.peek_token_is(TokenKind::Comma) {
-            self.next_token();
-            self.next_token();
-            args.push(
-                self.parse_expression(OperationPrecedences::Lowest)
-                    .context("failed to parse an expression in call args")?,
-            );
-        }
-
-        ensure!(
-            self.peek_token_is(TokenKind::RightParen),
-            "call expression must end with )."
-        );
-
-        self.next_token();
-
-        Ok(args)
+        Ok(Expression::Call(CallExpression::new(token, left, &args)))
     }
 
     fn parse_block_statement(&mut self) -> Result<BlockStatement> {
@@ -537,6 +518,55 @@ impl<'a> Parser<'a> {
         Ok(Expression::Infix(InfixExpression::new(
             token, &operator, left, right,
         )))
+    }
+
+    /// - カンマ区切りの式を解析する。
+    /// - 最初の式の直前のトークン指した状態で関数が始まり、渡されたpostfixと一致するトークンを指した状態で関数が終了する。
+    /// ```
+    /// [expr, expr, ..., expr]
+    /// ^
+    /// []
+    /// ^
+    /// ```
+    fn parse_expression_list(&mut self, postfix: TokenKind) -> Result<Vec<Expression>> {
+        let mut expr_list = Vec::new();
+
+        if self.peek_token_is(postfix) {
+            return Ok(expr_list);
+        }
+
+        self.next_token();
+
+        loop {
+            let expr = self
+                .parse_expression(OperationPrecedences::Lowest)
+                .with_context(|| {
+                    format!(
+                        "failed to parse expression {} in expression list.",
+                        expr_list.len()
+                    )
+                })?;
+
+            expr_list.push(expr);
+
+            if !self.peek_token_is(TokenKind::Comma) {
+                break;
+            }
+
+            self.next_token();
+            self.next_token();
+        }
+
+        ensure!(
+            self.peek_token_is(postfix),
+            "postfix token of the expression list is wrong. got: {:?}, expected: {:?}",
+            self.peek_token.kind,
+            postfix
+        );
+
+        self.next_token();
+
+        Ok(expr_list)
     }
 
     // helper functions
@@ -1561,6 +1591,64 @@ mod test {
         );
     }
 
+    #[test]
+    fn test_parsing_array_literals() {
+        let input = "[1, 2 * 2, 3 + 3]".as_ascii().unwrap();
+
+        let mut lexer = Lexer::new(input);
+        let mut parser = Parser::new(&mut lexer);
+
+        let program = parser.parse_program().unwrap_or_else(|_| {
+            parser.print_errors();
+            panic!("failed to parse program.");
+        });
+
+        if program.statements.len() != 1 {
+            panic!(
+                "number of statement of program is not 1. got: {}",
+                program.statements.len()
+            );
+        }
+
+        let stmt = &program.statements[0];
+
+        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
+            expr_stmt
+        } else {
+            panic!(
+                "stmt is not ExpressoinStatement. got: {}",
+                stmt.string().as_str()
+            );
+        };
+
+        let array_literal = if let Expression::ArrayLiteral(array_literal) = &expr_stmt.value {
+            array_literal
+        } else {
+            panic!("expr_stmt.value is not ArrayLiteral");
+        };
+
+        if array_literal.elements.len() != 3 {
+            panic!(
+                "array_literal.elements.len() is not 3. got: {}",
+                array_literal.elements.len()
+            );
+        }
+
+        test_integer_literal(&array_literal.elements[0], 1);
+        test_infix_expression(
+            &array_literal.elements[1],
+            &LiteralForTest::int(2),
+            "*".as_ascii().unwrap(),
+            &LiteralForTest::int(2),
+        );
+        test_infix_expression(
+            &array_literal.elements[2],
+            &LiteralForTest::int(3),
+            "+".as_ascii().unwrap(),
+            &LiteralForTest::int(3),
+        );
+    }
+
     fn test_infix_expression(
         expr: &Expression,
         left: &LiteralForTest,
@@ -1588,20 +1676,20 @@ mod test {
 
     fn test_literal_expression(expr: &Expression, expected: &LiteralForTest) {
         match expected {
-            LiteralForTest::Int(value) => test_integer_literal(expr, value),
+            LiteralForTest::Int(value) => test_integer_literal(expr, *value),
             LiteralForTest::Ident(value) => test_identifier(expr, value),
             LiteralForTest::Bool(value) => test_boolean_literal(expr, *value),
         }
     }
 
-    fn test_integer_literal(expr: &Expression, value: &i64) {
+    fn test_integer_literal(expr: &Expression, value: i64) {
         let integer_literal = if let Expression::IntegerLiteral(il) = expr {
             il
         } else {
             panic!("expr is not IntegerLiteral")
         };
 
-        if integer_literal.value != *value {
+        if integer_literal.value != value {
             panic!(
                 "integer_literal.value is not {}. got: {}",
                 value, integer_literal.value

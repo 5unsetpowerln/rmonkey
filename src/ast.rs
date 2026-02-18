@@ -20,6 +20,7 @@ pub enum Node<'a> {
     ExpressionStatement(&'a ExpressionStatement),
     Program(&'a Program),
     StringLiteral(&'a StringLiteral),
+    ArrayLiteral(&'a ArrayLiteral),
 }
 
 pub trait NodeInterface {
@@ -42,6 +43,7 @@ pub enum Expression {
     Function(FunctionLiteral),
     Call(CallExpression),
     StringLiteral(StringLiteral),
+    ArrayLiteral(ArrayLiteral),
 }
 
 impl Expression {
@@ -60,6 +62,7 @@ impl Expression {
             Self::Infix(x) => x,
             Self::Prefix(x) => x,
             Self::StringLiteral(x) => x,
+            Self::ArrayLiteral(x) => x,
         }
     }
 }
@@ -196,6 +199,49 @@ impl NodeInterface for StringLiteral {
         buffer.push(ascii::Char::QuotationMark);
         buffer.extend(&self.value);
         buffer.push(ascii::Char::QuotationMark);
+        buffer
+    }
+}
+
+// ArrayLiteral
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrayLiteral {
+    pub token: Token,
+    pub elements: Vec<Expression>,
+}
+
+impl ArrayLiteral {
+    pub fn new(token: Token, elements: &[Expression]) -> Self {
+        Self {
+            token,
+            elements: elements.to_vec(),
+        }
+    }
+}
+
+impl NodeInterface for ArrayLiteral {
+    fn get_node(&self) -> Node {
+        Node::ArrayLiteral(self)
+    }
+
+    fn token_literal(&self) -> Vec<ascii::Char> {
+        self.token.literal.clone()
+    }
+
+    fn string(&self) -> Vec<ascii::Char> {
+        let mut buffer = Vec::new();
+
+        buffer.push(ascii::Char::LeftSquareBracket);
+        for (i, element) in self.elements.iter().enumerate() {
+            buffer.extend(&element.string());
+
+            if i < self.elements.len() {
+                buffer.push(ascii::Char::Comma);
+                buffer.push(ascii::Char::Space);
+            }
+        }
+        buffer.push(ascii::Char::RightSquareBracket);
+
         buffer
     }
 }
