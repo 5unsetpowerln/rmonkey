@@ -65,6 +65,7 @@ fn __eval<T: ast::NodeInterface>(
             ast::Expression::StringLiteral(x) => __eval(x, env),
             ast::Expression::ArrayLiteral(x) => __eval(x, env),
             ast::Expression::IndexExpression(x) => __eval(x, env),
+            ast::Expression::HashLiteral(x) => __eval(x, env),
         },
         //// prefix expression
         Node::PrefixExpression(prefix_expr) => {
@@ -874,10 +875,13 @@ mod test {
     fn test_eval(input: &[ascii::Char]) -> Rc<object::Object> {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse.");
-        });
+        let program = match parser.parse_program() {
+            Ok(p) => p,
+            Err(err) => {
+                print_errors("failed to parse the program", err);
+                panic!();
+            }
+        };
 
         let env = Rc::new(RefCell::new(Environment::new(None)));
 

@@ -2,11 +2,13 @@ use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use anyhow::{Context, Result, anyhow, ensure};
+use indexmap::IndexMap;
 
 use crate::ast::{
     ArrayLiteral, BlockStatement, BoolLiteral, CallExpression, Expression, ExpressionStatement,
-    FunctionLiteral, Identifier, IfExpression, IndexExpression, InfixExpression, IntegerLiteral,
-    LetStatement, PrefixExpression, Program, ReturnStatement, Statement, StringLiteral,
+    FunctionLiteral, HashLiteral, Identifier, IfExpression, IndexExpression, IndexMapWrapper,
+    InfixExpression, IntegerLiteral, LetStatement, PrefixExpression, Program, ReturnStatement,
+    Statement, StringLiteral,
 };
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
@@ -31,8 +33,8 @@ enum OperationPrecedences {
 }
 
 // 演算子と優先順位の対応
-static PRECEDENCES: LazyLock<BTreeMap<TokenKind, OperationPrecedences>> = LazyLock::new(|| {
-    let mut map = BTreeMap::new();
+static PRECEDENCES: LazyLock<IndexMap<TokenKind, OperationPrecedences>> = LazyLock::new(|| {
+    let mut map = IndexMap::new();
 
     map.insert(TokenKind::Eq, OperationPrecedences::Equals);
     map.insert(TokenKind::NotEq, OperationPrecedences::Equals);
@@ -53,9 +55,8 @@ pub struct Parser<'a> {
     lexer: &'a mut Lexer,
     current_token: Token, // 現在のトークン
     peek_token: Token,    // 一つ先のトークン
-    prefix_parse_fns: BTreeMap<TokenKind, PrefixParseFn<'a>>,
-    infix_parse_fns: BTreeMap<TokenKind, InfixParseFn<'a>>,
-    errors: Vec<Box<dyn std::error::Error + Send + Sync>>,
+    prefix_parse_fns: IndexMap<TokenKind, PrefixParseFn<'a>>,
+    infix_parse_fns: IndexMap<TokenKind, InfixParseFn<'a>>,
 }
 impl<'a> Parser<'a> {
     pub fn empty(lexer: &'a mut Lexer) -> Self {
@@ -63,9 +64,8 @@ impl<'a> Parser<'a> {
             lexer,
             current_token: Token::empty(),
             peek_token: Token::empty(),
-            prefix_parse_fns: BTreeMap::new(),
-            infix_parse_fns: BTreeMap::new(),
-            errors: Vec::new(),
+            prefix_parse_fns: IndexMap::new(),
+            infix_parse_fns: IndexMap::new(),
         }
     }
 
@@ -85,6 +85,7 @@ impl<'a> Parser<'a> {
         parser.register_prefix(TokenKind::Function, Self::parse_function_literal);
         parser.register_prefix(TokenKind::String, Self::parse_string_literal);
         parser.register_prefix(TokenKind::LeftBracket, Self::parse_array_literal);
+        parser.register_prefix(TokenKind::LeftBrace, Self::parse_hash_literal);
 
         parser.register_prefix(TokenKind::Minus, Self::parse_prefix_expression);
         parser.register_prefix(TokenKind::Exclamation, Self::parse_prefix_expression);
@@ -125,22 +126,12 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let stmt_parse_result = self.parse_statement();
+            let stmt = self
+                .parse_statement()
+                .context("failed to parse a statement.")?;
+            program.statements.push(stmt);
 
             self.next_token();
-
-            match stmt_parse_result {
-                Ok(stmt) => {
-                    program.statements.push(stmt);
-                }
-                Err(err) => {
-                    self.errors.push(err.into());
-                }
-            }
-        }
-
-        if !self.errors.is_empty() {
-            return Err(anyhow!("failed to parse"));
         }
 
         Ok(program)
@@ -300,6 +291,66 @@ impl<'a> Parser<'a> {
         Ok(Expression::ArrayLiteral(ArrayLiteral::new(
             token, &expr_list,
         )))
+    }
+
+    fn parse_hash_literal(&mut self) -> Result<Expression> {
+        let token = self.current_token.clone();
+
+        // {a:b,c:d}
+        // ^
+
+        if self.peek_token_is(TokenKind::RightBrace) {
+            self.next_token();
+
+            return Ok(Expression::HashLiteral(HashLiteral::new(
+                token,
+                IndexMapWrapper::new(),
+            )));
+        }
+
+        self.next_token();
+
+        // {a:b,c:d}
+        //  ^
+
+        let mut map = IndexMapWrapper::new();
+
+        loop {
+            let left = self
+                .parse_expression(OperationPrecedences::Lowest)
+                .context("failed to parse an expression in the hash.")?;
+
+            ensure!(
+                self.peek_token_is(TokenKind::Colon),
+                "pair expressions are not separated by comma. got: {:?}",
+                self.peek_token
+            );
+
+            self.next_token();
+            self.next_token();
+
+            let right = self
+                .parse_expression(OperationPrecedences::Lowest)
+                .context("failed to parse an expression in the hash.")?;
+
+            map.0.insert(left, right);
+
+            if !self.peek_token_is(TokenKind::Comma) {
+                break;
+            }
+
+            self.next_token();
+            self.next_token();
+        }
+
+        ensure!(
+            self.peek_token_is(TokenKind::RightBrace),
+            "hash is not closed by \"}}\""
+        );
+
+        self.next_token();
+
+        Ok(Expression::HashLiteral(HashLiteral::new(token, map)))
     }
 
     fn parse_grouped_expression(&mut self) -> Result<Expression> {
@@ -612,25 +663,28 @@ impl<'a> Parser<'a> {
             .unwrap_or(&OperationPrecedences::Lowest)
     }
 
-    pub fn print_errors(&self) {
-        for err in self.errors.iter() {
-            println!("parse error: {err}");
+    // pub fn print_errors(&self) {
+    //     for err in self.errors.iter() {
+    //         println!("parse error: {err}");
 
-            let mut current = err.source();
+    //         let mut current = err.source();
 
-            while let Some(s) = current {
-                println!("<- {s}");
-                current = s.source();
-            }
-        }
-    }
+    //         while let Some(s) = current {
+    //             println!("<- {s}");
+    //             current = s.source();
+    //         }
+    //     }
+    // }
 }
 
 // #[cfg(test)]
 mod test {
+    use anyhow::{Context, Result, anyhow, bail, ensure};
+
     use super::Parser;
-    use crate::ast::{Expression, NodeInterface, Statement};
+    use crate::ast::{Expression, ExpressionStatement, InfixExpression, NodeInterface, Statement};
     use crate::lexer::Lexer;
+    use crate::utils::print_errors;
     use core::ascii;
 
     enum LiteralForTest {
@@ -650,6 +704,49 @@ mod test {
         fn bool(value: bool) -> Self {
             Self::Bool(value)
         }
+    }
+
+    fn parse_single_statement(input: &[ascii::Char]) -> Result<Statement> {
+        let mut lexer = Lexer::new(input);
+        let mut parser = Parser::new(&mut lexer);
+
+        let program = parser.parse_program().context("failed to parse program")?;
+
+        ensure!(
+            program.statements.len() == 1,
+            "number of statement of program is not 1. got: {}",
+            program.statements.len()
+        );
+
+        let stmt = &program.statements[0];
+
+        Ok(stmt.clone())
+    }
+
+    fn parse_single_expression_statement(input: &[ascii::Char]) -> Result<ExpressionStatement> {
+        let mut lexer = Lexer::new(input);
+        let mut parser = Parser::new(&mut lexer);
+
+        let program = parser.parse_program().context("failed to parse program")?;
+
+        ensure!(
+            program.statements.len() == 1,
+            "number of statement of program is not 1. got: {}",
+            program.statements.len()
+        );
+
+        let stmt = &program.statements[0];
+
+        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
+            expr_stmt
+        } else {
+            bail!(anyhow!(
+                "stmt is not ExpressoinStatement. got: {}",
+                stmt.string().as_str()
+            ))
+        };
+
+        Ok(expr_stmt.clone())
     }
 
     #[test]
@@ -676,21 +773,10 @@ mod test {
         ];
 
         for test in tests.iter() {
-            let mut lexer = Lexer::new(&test.input);
-            let mut parser = Parser::new(&mut lexer);
-            let program = parser.parse_program().unwrap_or_else(|_| {
-                parser.print_errors();
-                panic!("failed to parse.");
+            let stmt = &parse_single_statement(&test.input).unwrap_or_else(|err| {
+                print_errors("failed to parse single statement", err);
+                panic!();
             });
-
-            if program.statements.len() != 1 {
-                panic!(
-                    "length or program.statements is not 1. got: {}",
-                    program.statements.len()
-                );
-            }
-
-            let stmt = &program.statements[0];
 
             test_let_statement(stmt, &test.expected_identifier);
 
@@ -757,22 +843,11 @@ mod test {
         ];
 
         for test in tests.iter() {
-            let mut lexer = Lexer::new(&test.input);
-            let mut parser = Parser::new(&mut lexer);
-
-            let program = parser.parse_program().unwrap_or_else(|_| {
-                parser.print_errors();
-                panic!("failed to parse program.");
+            let stmt = &parse_single_statement(&test.input).unwrap_or_else(|err| {
+                print_errors("failed to parse single statement", err);
+                panic!();
             });
 
-            if program.statements.len() != 1 {
-                panic!(
-                    "length or program.statements is not 1. got: {}",
-                    program.statements.len()
-                );
-            }
-
-            let stmt = &program.statements[0];
             let ret_stmt = if let Statement::Return(ret_stmt) = stmt {
                 ret_stmt
             } else {
@@ -797,37 +872,15 @@ mod test {
     fn test_identifier_expression() {
         let input = "foobar;".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
+        let expr_stmt = parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse single expression statement", err);
+            panic!()
+        });
 
-        let program = match parser.parse_program() {
-            Ok(p) => p,
-            Err(_) => {
-                parser.print_errors();
-                panic!("failed to parse the program.");
-            }
-        };
-
-        if program.statements.len() != 1 {
-            panic!(
-                "invalid number of statement of program. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let estmt = if let Statement::Expression(estmt) = &program.statements[0] {
-            estmt
-        } else {
-            panic!(
-                "program.statements[0] is not ExpressionStatement. got: {:?}",
-                program.statements[0]
-            );
-        };
-
-        let ident = if let Expression::Identifier(ident) = &estmt.value {
+        let ident = if let Expression::Identifier(ident) = &expr_stmt.value {
             ident
         } else {
-            panic!("Expression is not Identifier. got: {:?}", estmt.value);
+            panic!("Expression is not Identifier. got: {:?}", expr_stmt.value);
         };
 
         if ident.value != "foobar".as_ascii().unwrap() {
@@ -849,36 +902,15 @@ mod test {
     fn test_integer_literal_expression() {
         let input = "5".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-        let program = match parser.parse_program() {
-            Ok(p) => p,
-            Err(_) => {
-                parser.print_errors();
-                panic!("failed to parse program.");
-            }
-        };
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
+        });
 
-        if program.statements.len() != 1 {
-            panic!(
-                "invalid number of statements of program. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let estmt = if let Statement::Expression(estmt) = &program.statements[0] {
-            estmt
-        } else {
-            panic!(
-                "program.statements[0] is not ExpressionStatement. got: {:?}",
-                program.statements[0]
-            );
-        };
-
-        let literal = if let Expression::IntegerLiteral(literal) = &estmt.value {
+        let literal = if let Expression::IntegerLiteral(literal) = &expr_stmt.value {
             literal
         } else {
-            panic!("expr is not IntegerLiteral. got: {:?}", &estmt.value);
+            panic!("expr is not IntegerLiteral. got: {:?}", &expr_stmt.value);
         };
 
         if literal.value != 5 {
@@ -920,28 +952,10 @@ mod test {
         ];
 
         for test in tests.iter() {
-            let mut lexer = Lexer::new(&test.input);
-            let mut parser = Parser::new(&mut lexer);
-
-            let program = parser.parse_program().unwrap_or_else(|_| {
-                parser.print_errors();
-                panic!("failed to parse program.");
+            let expr_stmt = &parse_single_expression_statement(&test.input).unwrap_or_else(|err| {
+                print_errors("failed to parse expression statement", err);
+                panic!();
             });
-
-            if program.statements.len() != 1 {
-                panic!(
-                    "invalid number of statement of program. got: {}",
-                    program.statements.len()
-                );
-            }
-
-            let stmt = &program.statements[0];
-
-            let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-                expr_stmt
-            } else {
-                panic!("program.statements[0] is not ExpressionStatement.");
-            };
 
             let prefix_expr = if let Expression::Prefix(prefix_expr) = &expr_stmt.value {
                 prefix_expr
@@ -1106,31 +1120,10 @@ mod test {
         ];
 
         for test in tests.iter() {
-            let mut lexer = Lexer::new(&test.input);
-            let mut parser = Parser::new(&mut lexer);
-
-            let program = parser.parse_program().unwrap_or_else(|_| {
-                parser.print_errors();
-                panic!("failed to parse program.");
+            let expr_stmt = &parse_single_expression_statement(&test.input).unwrap_or_else(|err| {
+                print_errors("failed to parse expression statement", err);
+                panic!();
             });
-
-            if program.statements.len() != 1 {
-                panic!(
-                    "number of statement of program is not 1. got: {}",
-                    program.statements.len()
-                );
-            }
-
-            let stmt = &program.statements[0];
-
-            let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-                expr_stmt
-            } else {
-                panic!(
-                    "program.statements[0] is not ExpressionStatement. got: {}",
-                    stmt.string().as_str()
-                );
-            };
 
             test_infix_expression(&expr_stmt.value, &test.left, &test.operator, &test.right);
         }
@@ -1208,10 +1201,13 @@ mod test {
             let mut lexer = Lexer::new(&test.input);
             let mut parser = Parser::new(&mut lexer);
 
-            let program = parser.parse_program().unwrap_or_else(|_| {
-                parser.print_errors();
-                panic!("failed to parse program.");
-            });
+            let program = match parser.parse_program() {
+                Ok(p) => p,
+                Err(err) => {
+                    print_errors("failed to parse the program", err);
+                    panic!()
+                }
+            };
 
             let actual = program.string();
             if actual != test.expected {
@@ -1242,31 +1238,10 @@ mod test {
         let tests = vec![Test::new("true;", true), Test::new("false;", false)];
 
         for test in tests.iter() {
-            let mut lexer = Lexer::new(&test.input);
-            let mut parser = Parser::new(&mut lexer);
-
-            let program = parser.parse_program().unwrap_or_else(|_| {
-                parser.print_errors();
-                panic!("failed to parse program.");
+            let expr_stmt = &parse_single_expression_statement(&test.input).unwrap_or_else(|err| {
+                print_errors("failed to parse expression statement", err);
+                panic!();
             });
-
-            if program.statements.len() != 1 {
-                panic!(
-                    "number of statement of program is not 1. got: {}",
-                    program.statements.len()
-                );
-            }
-
-            let stmt = &program.statements[0];
-
-            let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-                expr_stmt
-            } else {
-                panic!(
-                    "stmt is not ExpressoinStatement. got: {}",
-                    stmt.string().as_str()
-                );
-            };
 
             let bool_expr = if let Expression::BoolLiteral(bool_expr) = &expr_stmt.value {
                 bool_expr
@@ -1290,31 +1265,10 @@ mod test {
     fn test_if_expression() {
         let input = "if (x < y) {x}".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse program.");
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
         });
-
-        if program.statements.len() != 1 {
-            panic!(
-                "number of statement of program is not 1. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let stmt = &program.statements[0];
-
-        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-            expr_stmt
-        } else {
-            panic!(
-                "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
-            );
-        };
 
         let if_expr = if let Expression::If(if_expr) = &expr_stmt.value {
             if_expr
@@ -1360,31 +1314,10 @@ mod test {
     fn test_if_else_expression() {
         let input = "if (x < y) {x} else {y}".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse program.");
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
         });
-
-        if program.statements.len() != 1 {
-            panic!(
-                "number of statement of program is not 1. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let stmt = &program.statements[0];
-
-        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-            expr_stmt
-        } else {
-            panic!(
-                "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
-            );
-        };
 
         let if_expr = if let Expression::If(if_expr) = &expr_stmt.value {
             if_expr
@@ -1451,31 +1384,10 @@ mod test {
     fn test_function_literal_parsing() {
         let input = "fn(x, y) { x + y; }".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse program.");
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
         });
-
-        if program.statements.len() != 1 {
-            panic!(
-                "number of statement of program is not 1. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let stmt = &program.statements[0];
-
-        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-            expr_stmt
-        } else {
-            panic!(
-                "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
-            );
-        };
 
         let func_literal = if let Expression::Function(func_literal) = &expr_stmt.value {
             func_literal
@@ -1529,31 +1441,10 @@ mod test {
     fn test_string_literal_expression() {
         let input = "\"hello world\";".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse program.");
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
         });
-
-        if program.statements.len() != 1 {
-            panic!(
-                "number of statement of program is not 1. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let stmt = &program.statements[0];
-
-        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-            expr_stmt
-        } else {
-            panic!(
-                "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
-            );
-        };
 
         let string_literal = if let Expression::StringLiteral(s) = &expr_stmt.value {
             s
@@ -1576,31 +1467,10 @@ mod test {
     fn test_call_expression_parsing() {
         let input = "add(1, 2 * 3, 4 + 5);".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse program.");
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
         });
-
-        if program.statements.len() != 1 {
-            panic!(
-                "number of statement of program is not 1. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let stmt = &program.statements[0];
-
-        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-            expr_stmt
-        } else {
-            panic!(
-                "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
-            );
-        };
 
         let call_expr = if let Expression::Call(call_expr) = &expr_stmt.value {
             call_expr
@@ -1633,31 +1503,10 @@ mod test {
     fn test_parsing_array_literals() {
         let input = "[1, 2 * 2, 3 + 3]".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse program.");
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
         });
-
-        if program.statements.len() != 1 {
-            panic!(
-                "number of statement of program is not 1. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let stmt = &program.statements[0];
-
-        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-            expr_stmt
-        } else {
-            panic!(
-                "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
-            );
-        };
 
         let array_literal = if let Expression::ArrayLiteral(array_literal) = &expr_stmt.value {
             array_literal
@@ -1691,31 +1540,10 @@ mod test {
     fn test_parsing_index_expressions() {
         let input = "myArray[1 + 1]".as_ascii().unwrap();
 
-        let mut lexer = Lexer::new(input);
-        let mut parser = Parser::new(&mut lexer);
-
-        let program = parser.parse_program().unwrap_or_else(|_| {
-            parser.print_errors();
-            panic!("failed to parse program.");
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
         });
-
-        if program.statements.len() != 1 {
-            panic!(
-                "number of statement of program is not 1. got: {}",
-                program.statements.len()
-            );
-        }
-
-        let stmt = &program.statements[0];
-
-        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
-            expr_stmt
-        } else {
-            panic!(
-                "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
-            );
-        };
 
         let idx_expr = if let Expression::IndexExpression(idx_expr) = &expr_stmt.value {
             idx_expr
@@ -1731,6 +1559,125 @@ mod test {
             "+".as_ascii().unwrap(),
             &LiteralForTest::int(1),
         );
+    }
+
+    #[test]
+    fn test_parsing_hash_literals_string_keys() {
+        let input = "{\"one\": 1, \"two\": 2, \"three\": 3}".as_ascii().unwrap();
+        let expected = vec![("one", 1), ("two", 2), ("three", 3)];
+
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
+        });
+
+        let hash_literal = if let Expression::HashLiteral(hash_literal) = &expr_stmt.value {
+            hash_literal
+        } else {
+            panic!("expr_stmt.value is not HashLiteral");
+        };
+
+        if hash_literal.pairs.0.len() != 3 {
+            panic!(
+                "hash_literal.pairs has wrong length. got: {}, expected: {}",
+                hash_literal.pairs.0.len(),
+                3
+            );
+        }
+
+        for (i, (key, value)) in hash_literal.pairs.0.iter().enumerate() {
+            println!("{key:?}, {:?}", expected[i]);
+
+            test_string_literal(key, expected[i].0).unwrap_or_else(|err| {
+                print_errors(format!("test {i} failed").as_str(), err);
+            });
+            test_integer_literal(value, expected[i].1);
+        }
+    }
+
+    #[test]
+    fn test_parsing_empty_hash_literal() {
+        let input = "{}".as_ascii().unwrap();
+
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
+        });
+
+        let hash_literal = if let Expression::HashLiteral(hash_literal) = &expr_stmt.value {
+            hash_literal
+        } else {
+            panic!("expr_stmt.value is not HashLiteral");
+        };
+
+        if hash_literal.pairs.0.len() != 0 {
+            panic!(
+                "hash_literal.pairs has wrong length. got: {}, expected: {}",
+                hash_literal.pairs.0.len(),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn test_parsing_hash_literals_with_expressions() {
+        let input = "{\"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5}"
+            .as_ascii()
+            .unwrap();
+
+        let expected: Vec<(&str, fn(&Expression))> = vec![
+            ("one", |expr: &Expression| {
+                test_infix_expression(
+                    expr,
+                    &LiteralForTest::int(0),
+                    "+".as_ascii().unwrap(),
+                    &LiteralForTest::int(1),
+                );
+            }),
+            ("two", |expr: &Expression| {
+                test_infix_expression(
+                    expr,
+                    &LiteralForTest::int(10),
+                    "-".as_ascii().unwrap(),
+                    &LiteralForTest::int(8),
+                );
+            }),
+            ("three", |expr: &Expression| {
+                test_infix_expression(
+                    expr,
+                    &LiteralForTest::int(15),
+                    "/".as_ascii().unwrap(),
+                    &LiteralForTest::int(5),
+                );
+            }),
+        ];
+
+        let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
+            print_errors("failed to parse expression statement", err);
+            panic!();
+        });
+
+        let hash_literal = if let Expression::HashLiteral(hash_literal) = &expr_stmt.value {
+            hash_literal
+        } else {
+            panic!("expr_stmt.value is not HashLiteral");
+        };
+
+        if hash_literal.pairs.0.len() != 3 {
+            panic!(
+                "hash_literal.pairs has wrong length. got: {}, expected: {}",
+                hash_literal.pairs.0.len(),
+                3
+            );
+        }
+
+        for (i, (key, value)) in hash_literal.pairs.0.iter().enumerate() {
+            test_string_literal(key, expected[i].0).unwrap_or_else(|err| {
+                print_errors(format!("test {i} failed").as_str(), err);
+                panic!();
+            });
+            (expected[i].1)(value);
+        }
     }
 
     fn test_infix_expression(
@@ -1764,6 +1711,23 @@ mod test {
             LiteralForTest::Ident(value) => test_identifier(expr, value),
             LiteralForTest::Bool(value) => test_boolean_literal(expr, *value),
         }
+    }
+
+    fn test_string_literal(expr: &Expression, value: &str) -> Result<()> {
+        let string_literal = if let Expression::StringLiteral(sl) = expr {
+            sl
+        } else {
+            bail!(anyhow!("expr is not StringLiteral"));
+        };
+
+        ensure!(
+            string_literal.value.as_str() == value,
+            "string_literal.value is not {}. got: {}",
+            value,
+            string_literal.value.as_str()
+        );
+
+        Ok(())
     }
 
     fn test_integer_literal(expr: &Expression, value: i64) {

@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+indexmap = "2.13.0"
 log = "0.4.29"

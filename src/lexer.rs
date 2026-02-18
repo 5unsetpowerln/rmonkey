@@ -86,6 +86,7 @@ impl Lexer {
             ascii::Char::RightSquareBracket => {
                 Token::new(TokenKind::RightBracket, "]".as_ascii().unwrap())
             }
+            ascii::Char::Colon => Token::new(TokenKind::Colon, ":".as_ascii().unwrap()),
             _ => {
                 if is_letter(self.c) {
                     // a~z/A~Z/_から始まる場合はidentifier/keywordとして解釈する
@@ -251,6 +252,7 @@ mod test {
             \"foobar\"
             \"foo bar\"
             [1, 2];
+            {\"foo\": \"bar\"}
             "
         .as_ascii()
         .unwrap();
@@ -337,6 +339,11 @@ mod test {
             Test::new(TokenKind::Int, "2"),
             Test::new(TokenKind::RightBracket, "]"),
             Test::new(TokenKind::Semicolon, ";"),
+            Test::new(TokenKind::LeftBrace, "{"),
+            Test::new(TokenKind::String, "foo"),
+            Test::new(TokenKind::Colon, ":"),
+            Test::new(TokenKind::String, "bar"),
+            Test::new(TokenKind::RightBrace, "}"),
             Test::new(TokenKind::Eof, "\0"),
         ];
 

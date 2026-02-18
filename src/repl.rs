@@ -30,12 +30,12 @@ pub fn start() {
         let mut lexer = Lexer::new(line.as_ascii().expect("failed to parse an input as ascii"));
         let mut parser = Parser::new(&mut lexer);
 
-        let program = if let Ok(p) = parser.parse_program() {
-            p
-        } else {
-            parser.print_errors();
-            println!("failed to parse.");
-            continue;
+        let program = match parser.parse_program() {
+            Ok(p) => p,
+            Err(err) => {
+                print_errors("failed to parse program", err);
+                continue;
+            }
         };
 
         let evaluated = match eval(&program, env.clone()) {
