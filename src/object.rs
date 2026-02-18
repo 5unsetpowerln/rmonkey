@@ -19,6 +19,7 @@ pub enum Object {
     ReturnValue(Rc<ReturnValue>),
     String(Rc<StringObject>),
     Builtin(Rc<Builtin>),
+    Array(Rc<Array>),
 }
 
 impl Object {
@@ -31,6 +32,7 @@ impl Object {
             Object::Function(x) => x.clone(),
             Object::String(x) => x.clone(),
             Object::Builtin(x) => x.clone(),
+            Object::Array(x) => x.clone(),
         }
     }
 
@@ -231,6 +233,43 @@ impl Display for Function {
         buffer.push_str("\n}");
 
         write!(f, "{buffer}")
+    }
+}
+
+// Array
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Array {
+    pub array: Vec<Rc<Object>>,
+}
+
+impl Array {
+    pub fn new(array: &[Rc<Object>]) -> Self {
+        Self {
+            array: array.to_vec(),
+        }
+    }
+}
+
+impl ObjectInterface for Array {}
+
+impl Display for Array {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buffer = Vec::new();
+
+        buffer.push(ascii::Char::LeftSquareBracket);
+
+        for (i, obj) in self.array.iter().enumerate() {
+            buffer.extend(format!("{obj}").as_ascii().unwrap());
+
+            if i < self.array.len() - 1 {
+                buffer.push(ascii::Char::Comma);
+                buffer.push(ascii::Char::Space);
+            }
+        }
+
+        buffer.push(ascii::Char::RightSquareBracket);
+
+        write!(f, "{}", buffer.as_str())
     }
 }
 

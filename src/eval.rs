@@ -95,6 +95,17 @@ fn __eval<T: ast::NodeInterface>(
                 .context("failed to apply function?")
                 .context("failed to eval call expression.")
         }
+        //// index reference
+        Node::IndexExpression(idx_expr) => {
+            let left = __eval(&*idx_expr.left, env.clone())
+                .context("failed to eval left object.")
+                .context("failed to eval index expression.")?;
+            let index = __eval(&*idx_expr.index, env)
+                .context("failed to index object.")
+                .context("failed to eval index expression.")?;
+
+            eval_index_expression(left, index).context("failed to eval index expression.")
+        }
 
         //// literals
         Node::IntegerLiteral(int_literal) => Ok(Rc::new(Object::int(int_literal.value))),
@@ -103,6 +114,14 @@ fn __eval<T: ast::NodeInterface>(
             Ok(Rc::new(Object::from_func_litereal(func_literal, env)))
         }
         Node::StringLiteral(literal) => Ok(Rc::new(Object::str(&literal.value))),
+        Node::ArrayLiteral(literal) => {
+            let elements = eval_expressions(&literal.elements, env)
+                .context("failed to eval elements")
+                .context("failed to eval array literal.")?;
+            Ok(Rc::new(Object::Array(Rc::new(object::Array::new(
+                &elements,
+            )))))
+        }
         _ => unimplemented!(),
     }
 }
@@ -311,6 +330,26 @@ fn eval_identifier(ident: &ast::Identifier, env: Rc<RefCell<Environment>>) -> Re
     bail!("identifier not found: {}", ident.value.as_str());
 }
 
+// index expression
+fn eval_index_expression(left: Rc<Object>, index: Rc<Object>) -> Result<Rc<Object>> {
+    match (&*left, &*index) {
+        (Object::Array(array), Object::Integer(integer)) => {
+            let obj = if let Some(obj) = array.array.get(integer.value as usize) {
+                obj.clone()
+            } else {
+                Rc::new(Object::null())
+            };
+
+            Ok(obj)
+        }
+        _ => Err(anyhow!(
+            "unsupported pattern of left and index object. left object: {:?}, index object: {:?}",
+            &*left,
+            &*index
+        )),
+    }
+}
+
 //
 fn eval_expressions(
     expressions: &[ast::Expression],
@@ -355,19 +394,17 @@ fn unwrap_return_value(obj: Rc<Object>) -> Rc<Object> {
 
 mod test {
     use std::ascii;
-    use std::cell::RefCell;
     use std::rc::Rc;
-    use std::sync::BarrierWaitResult;
 
-    use anyhow::{Result, anyhow, bail};
+    use anyhow::{Result, bail};
 
     use crate::ast::NodeInterface;
     use crate::lexer::Lexer;
-    use crate::object::{self, Environment, Object};
+    use crate::object::{self, Object};
     use crate::parser::Parser;
     use crate::utils::print_errors;
 
-    use super::{__eval, eval};
+    use super::eval;
 
     #[test]
     fn test_eval_integer_expression() {
@@ -739,6 +776,80 @@ mod test {
                 print_errors(format!("test {i} failed.").as_str(), err);
                 panic!();
             });
+        }
+    }
+
+    #[test]
+    fn test_array_literals() {
+        let input = "[1, 2 * 2, 3 + 3]".as_ascii().unwrap();
+
+        let evaluated = &*test_eval(input);
+
+        let array = if let Object::Array(array) = evaluated {
+            array
+        } else {
+            panic!("the object is not Array. got: {evaluated:?}",);
+        };
+
+        if array.array.len() != 3 {
+            panic!("the length of array is not 3. got: {}", array.array.len());
+        }
+
+        test_integer_object(&array.array[0], 1);
+        test_integer_object(&array.array[1], 4);
+        test_integer_object(&array.array[2], 6);
+    }
+
+    #[test]
+    fn test_array_index_expressions() {
+        #[derive(Debug)]
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: Object,
+        }
+        impl Test {
+            fn new(input: &str, expected: Object) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+
+        let tests = vec![
+            Test::new("[1, 2, 3][0]", Object::int(1)),
+            Test::new("[1, 2, 3][1]", Object::int(2)),
+            Test::new("[1, 2, 3][2]", Object::int(3)),
+            Test::new("let i = 0; [1][i];", Object::int(1)),
+            Test::new("[1, 2, 3][1 + 1];", Object::int(3)),
+            Test::new("let myArray = [1, 2, 3]; myArray[2];", Object::int(3)),
+            Test::new(
+                "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2];",
+                Object::int(6),
+            ),
+            Test::new(
+                "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]",
+                Object::int(2),
+            ),
+            Test::new("[1, 2, 3][3]", Object::null()),
+            Test::new("[1, 2, 3][-1]", Object::null()),
+        ];
+
+        for (i, test) in tests.iter().enumerate() {
+            let evaluated = &*test_eval(&test.input);
+
+            match (evaluated, &test.expected) {
+                (Object::Integer(_), Object::Integer(y)) => test_integer_object(evaluated, y.value)
+                    .unwrap_or_else(|err| {
+                        print_errors(format!("test {} failed.", i).as_str(), err);
+                        panic!();
+                    }),
+                (Object::Null(_), Object::Null(_)) => {}
+                _ => panic!(
+                    "unexpected or unsupported objects. evaluated: {:?}, expected: {:?}",
+                    evaluated, &test.expected
+                ),
+            }
         }
     }
 
