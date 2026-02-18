@@ -54,6 +54,7 @@ fn __eval<T: ast::NodeInterface>(
             ast::Expression::Prefix(x) => __eval(x, env),
             ast::Expression::StringLiteral(x) => __eval(x, env),
             ast::Expression::ArrayLiteral(x) => __eval(x, env),
+            ast::Expression::IndexExpression(x) => __eval(x, env),
         },
         //// prefix expression
         Node::PrefixExpression(prefix_expr) => {

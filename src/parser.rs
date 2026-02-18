@@ -5,8 +5,8 @@ use anyhow::{Context, Result, anyhow, ensure};
 
 use crate::ast::{
     ArrayLiteral, BlockStatement, BoolLiteral, CallExpression, Expression, ExpressionStatement,
-    FunctionLiteral, Identifier, IfExpression, InfixExpression, IntegerLiteral, LetStatement,
-    PrefixExpression, Program, ReturnStatement, Statement, StringLiteral,
+    FunctionLiteral, Identifier, IfExpression, IndexExpression, InfixExpression, IntegerLiteral,
+    LetStatement, PrefixExpression, Program, ReturnStatement, Statement, StringLiteral,
 };
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
@@ -27,6 +27,7 @@ enum OperationPrecedences {
     Product,     // *
     Prefix,      // -X or !X
     Call,        // myFunction(X)
+    Index,       // array[x]
 }
 
 // 演算子と優先順位の対応
@@ -42,6 +43,7 @@ static PRECEDENCES: LazyLock<BTreeMap<TokenKind, OperationPrecedences>> = LazyLo
     map.insert(TokenKind::Slash, OperationPrecedences::Product);
     map.insert(TokenKind::Asterisk, OperationPrecedences::Product);
     map.insert(TokenKind::LeftParen, OperationPrecedences::Call);
+    map.insert(TokenKind::LeftBracket, OperationPrecedences::Index);
 
     map
 });
@@ -88,6 +90,7 @@ impl<'a> Parser<'a> {
         parser.register_prefix(TokenKind::Exclamation, Self::parse_prefix_expression);
 
         parser.register_infix(TokenKind::LeftParen, Self::parse_call_expression);
+        parser.register_infix(TokenKind::LeftBracket, Self::parse_index_expression);
 
         parser.register_infix(TokenKind::Plus, Self::parse_infix_expression);
         parser.register_infix(TokenKind::Minus, Self::parse_infix_expression);
@@ -483,6 +486,25 @@ impl<'a> Parser<'a> {
         }
 
         Ok(BlockStatement::new(token, &statements))
+    }
+
+    fn parse_index_expression(&mut self, left: Expression) -> Result<Expression> {
+        // identifier[expression]
+        //           ^
+
+        let token = self.current_token.clone();
+
+        self.next_token();
+
+        let index = self
+            .parse_expression(OperationPrecedences::Lowest)
+            .context("failed to parse expression in index operator.")?;
+
+        self.next_token();
+
+        Ok(Expression::IndexExpression(IndexExpression::new(
+            token, left, index,
+        )))
     }
 
     fn parse_prefix_expression(&mut self) -> Result<Expression> {
@@ -1164,6 +1186,22 @@ mod test {
                 "add(a + b + c * d / f + g)",
                 "add((((a + b) + ((c * d) / f)) + g))",
             ),
+            Test::new(
+                "a * [1, 2, 3, 4][b * c] * d",
+                "((a * ([1, 2, 3, 4][(b * c)])) * d)",
+            ),
+            Test::new(
+                "add(a * b[2], b[1], 2 * [1, 2][1])",
+                "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))",
+            ),
+            Test::new(
+                "a * [1, 2, 3, 4][b * c] * d",
+                "((a * ([1, 2, 3, 4][(b * c)])) * d)",
+            ),
+            Test::new(
+                "add(a * b[2], b[1], 2 * [1, 2][1])",
+                "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))",
+            ),
         ];
 
         for test in tests.iter() {
@@ -1646,6 +1684,52 @@ mod test {
             &LiteralForTest::int(3),
             "+".as_ascii().unwrap(),
             &LiteralForTest::int(3),
+        );
+    }
+
+    #[test]
+    fn test_parsing_index_expressions() {
+        let input = "myArray[1 + 1]".as_ascii().unwrap();
+
+        let mut lexer = Lexer::new(input);
+        let mut parser = Parser::new(&mut lexer);
+
+        let program = parser.parse_program().unwrap_or_else(|_| {
+            parser.print_errors();
+            panic!("failed to parse program.");
+        });
+
+        if program.statements.len() != 1 {
+            panic!(
+                "number of statement of program is not 1. got: {}",
+                program.statements.len()
+            );
+        }
+
+        let stmt = &program.statements[0];
+
+        let expr_stmt = if let Statement::Expression(expr_stmt) = stmt {
+            expr_stmt
+        } else {
+            panic!(
+                "stmt is not ExpressoinStatement. got: {}",
+                stmt.string().as_str()
+            );
+        };
+
+        let idx_expr = if let Expression::IndexExpression(idx_expr) = &expr_stmt.value {
+            idx_expr
+        } else {
+            panic!("expr_stmt.value is not IndexExpression");
+        };
+
+        test_identifier(&idx_expr.left, "myArray".as_ascii().unwrap());
+
+        test_infix_expression(
+            &idx_expr.index,
+            &LiteralForTest::int(1),
+            "+".as_ascii().unwrap(),
+            &LiteralForTest::int(1),
         );
     }
 

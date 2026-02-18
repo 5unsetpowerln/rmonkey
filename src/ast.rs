@@ -13,6 +13,7 @@ pub enum Node<'a> {
     IfExpression(&'a IfExpression),
     FunctionLiteral(&'a FunctionLiteral),
     CallExpression(&'a CallExpression),
+    IndexExpression(&'a IndexExpression),
     BlockStatement(&'a BlockStatement),
     Statement(&'a Statement),
     LetStatement(&'a LetStatement),
@@ -44,6 +45,7 @@ pub enum Expression {
     Call(CallExpression),
     StringLiteral(StringLiteral),
     ArrayLiteral(ArrayLiteral),
+    IndexExpression(IndexExpression),
 }
 
 impl Expression {
@@ -63,6 +65,7 @@ impl Expression {
             Self::Prefix(x) => x,
             Self::StringLiteral(x) => x,
             Self::ArrayLiteral(x) => x,
+            Self::IndexExpression(x) => x,
         }
     }
 }
@@ -235,7 +238,7 @@ impl NodeInterface for ArrayLiteral {
         for (i, element) in self.elements.iter().enumerate() {
             buffer.extend(&element.string());
 
-            if i < self.elements.len() {
+            if i < self.elements.len() - 1 {
                 buffer.push(ascii::Char::Comma);
                 buffer.push(ascii::Char::Space);
             }
@@ -472,6 +475,47 @@ impl NodeInterface for CallExpression {
             }
         }
         buffer.push(')'.as_ascii().unwrap());
+
+        buffer
+    }
+}
+
+// IndexExpression
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexExpression {
+    pub token: Token,
+    pub left: Box<Expression>,
+    pub index: Box<Expression>,
+}
+
+impl IndexExpression {
+    pub fn new(token: Token, left: Expression, index: Expression) -> Self {
+        Self {
+            token,
+            left: Box::new(left),
+            index: Box::new(index),
+        }
+    }
+}
+
+impl NodeInterface for IndexExpression {
+    fn get_node(&self) -> Node {
+        Node::IndexExpression(self)
+    }
+
+    fn token_literal(&self) -> Vec<ascii::Char> {
+        self.token.literal.clone()
+    }
+
+    fn string(&self) -> Vec<ascii::Char> {
+        let mut buffer = Vec::new();
+
+        buffer.push(ascii::Char::LeftParenthesis);
+        buffer.extend(&self.left.string());
+        buffer.push(ascii::Char::LeftSquareBracket);
+        buffer.extend(&self.index.string());
+        buffer.push(ascii::Char::RightSquareBracket);
+        buffer.push(ascii::Char::RightParenthesis);
 
         buffer
     }
