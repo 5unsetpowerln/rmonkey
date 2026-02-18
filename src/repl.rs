@@ -15,6 +15,8 @@ pub fn start() {
     let stdin_ = stdin();
     let mut stdout_ = stdout();
 
+    let env = Rc::new(RefCell::new(Environment::new(None)));
+
     loop {
         print!("{PROMPT}");
         stdout_.flush().expect("failed to flush stdout");
@@ -36,7 +38,7 @@ pub fn start() {
             continue;
         };
 
-        let evaluated = match eval(&program) {
+        let evaluated = match eval(&program, env.clone()) {
             Ok(x) => x,
             Err(err) => {
                 print_errors("failed to evaluate the program", err);

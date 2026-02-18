@@ -6,24 +6,24 @@ use std::rc::Rc;
 
 use anyhow::{Result, bail, ensure};
 
-use crate::ast::{self, BoolLiteral, FunctionLiteral, NodeInterface};
+use crate::ast::{self, ArrayLiteral, BoolLiteral, FunctionLiteral, NodeInterface};
 
 pub trait ObjectInterface: Display {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Object {
-    Integer(Rc<Integer>),
-    Bool(Rc<Bool>),
-    Null(Rc<Null>),
-    Function(Rc<Function>),
-    ReturnValue(Rc<ReturnValue>),
-    String(Rc<StringObject>),
-    Builtin(Rc<Builtin>),
-    Array(Rc<Array>),
+    Integer(Rc<RefCell<Integer>>),
+    Bool(Rc<RefCell<Bool>>),
+    Null(Rc<RefCell<Null>>),
+    Function(Rc<RefCell<Function>>),
+    ReturnValue(Rc<RefCell<ReturnValue>>),
+    String(Rc<RefCell<StringObject>>),
+    Builtin(Rc<RefCell<Builtin>>),
+    Array(Rc<RefCell<Array>>),
 }
 
 impl Object {
-    pub fn as_interface(&self) -> Rc<dyn ObjectInterface> {
+    pub fn as_interface(&self) -> Rc<RefCell<dyn ObjectInterface>> {
         match self {
             Object::Bool(x) => x.clone(),
             Object::Integer(x) => x.clone(),
@@ -37,31 +37,35 @@ impl Object {
     }
 
     pub fn int(val: i64) -> Self {
-        Self::Integer(Rc::new(Integer::new(val)))
+        Self::Integer(Rc::new(RefCell::new(Integer::new(val))))
     }
 
     pub fn bool(value: bool) -> Self {
-        Self::Bool(Rc::new(Bool::new(value)))
+        Self::Bool(Rc::new(RefCell::new(Bool::new(value))))
     }
 
     pub fn null() -> Self {
-        Self::Null(Rc::new(Null::new()))
+        Self::Null(Rc::new(RefCell::new(Null::new())))
     }
 
     pub fn str(value: &[ascii::Char]) -> Self {
-        Self::String(Rc::new(StringObject::new(value)))
+        Self::String(Rc::new(RefCell::new(StringObject::new(value))))
     }
 
     pub fn builtin(func: BuiltinFunction) -> Self {
-        Self::Builtin(Rc::new(Builtin::new(func)))
+        Self::Builtin(Rc::new(RefCell::new(Builtin::new(func))))
     }
 
     pub fn from_func_litereal(literal: &FunctionLiteral, env: Rc<RefCell<Environment>>) -> Self {
-        Self::Function(Rc::new(Function::new(&literal.params, &literal.body, env)))
+        Self::Function(Rc::new(RefCell::new(Function::new(
+            &literal.params,
+            &literal.body,
+            env,
+        ))))
     }
 
     pub fn ret_val(val: Rc<Object>) -> Self {
-        Self::ReturnValue(Rc::new(ReturnValue::new(val)))
+        Self::ReturnValue(Rc::new(RefCell::new(ReturnValue::new(val))))
     }
 
     pub fn is_returned(&self) -> bool {
@@ -71,7 +75,7 @@ impl Object {
 
 impl Display for Object {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_interface())
+        write!(f, "{}", self.as_interface().borrow())
     }
 }
 

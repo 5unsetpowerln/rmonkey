@@ -9,10 +9,20 @@ use crate::ast::{Node, NodeInterface};
 use crate::object::{Environment, Object, create_false, create_null, create_true};
 use crate::{ast, builtins, object};
 
-pub fn eval<T: ast::NodeInterface>(node: &T) -> Result<Rc<object::Object>> {
-    let mut env = Environment::new(None);
-    env.set("len", Rc::new(Object::builtin(builtins::len)));
-    __eval(node, Rc::new(RefCell::new(env)))
+pub fn eval<T: ast::NodeInterface>(
+    node: &T,
+    env: Rc<RefCell<Environment>>,
+) -> Result<Rc<object::Object>> {
+    env.borrow_mut()
+        .set("len", Rc::new(Object::builtin(builtins::len)));
+    env.borrow_mut()
+        .set("first", Rc::new(Object::builtin(builtins::first)));
+    env.borrow_mut()
+        .set("last", Rc::new(Object::builtin(builtins::last)));
+    env.borrow_mut()
+        .set("push", Rc::new(Object::builtin(builtins::push)));
+
+    __eval(node, env)
 }
 
 fn __eval<T: ast::NodeInterface>(
@@ -118,8 +128,8 @@ fn __eval<T: ast::NodeInterface>(
             let elements = eval_expressions(&literal.elements, env)
                 .context("failed to eval elements")
                 .context("failed to eval array literal.")?;
-            Ok(Rc::new(Object::Array(Rc::new(object::Array::new(
-                &elements,
+            Ok(Rc::new(Object::Array(Rc::new(RefCell::new(
+                object::Array::new(&elements),
             )))))
         }
         _ => unimplemented!(),
@@ -140,7 +150,7 @@ fn eval_program(
         let result = __eval(stmt, env.clone()).context("failed to evaluate a statement.")?;
 
         if let Object::ReturnValue(ret_value) = &*result {
-            return Ok(ret_value.value.clone());
+            return Ok(ret_value.borrow().value.clone());
         }
 
         if i == stmts.len() - 1 {
@@ -184,7 +194,7 @@ fn eval_statements(
         let result = __eval(stmt, env.clone()).context("failed to evaluate a statement.")?;
 
         if let Object::ReturnValue(ret_value) = &*result {
-            return Ok(ret_value.value.clone());
+            return Ok(ret_value.borrow().value.clone());
         }
 
         if i == statements.len() - 1 {
@@ -211,7 +221,7 @@ fn eval_prefix_expression(
 fn eval_exclamation_operator_expression(right: &object::Object) -> Rc<object::Object> {
     match right {
         object::Object::Bool(bool_obj) => {
-            if bool_obj.value {
+            if bool_obj.borrow().value {
                 create_false()
             } else {
                 create_true()
@@ -224,7 +234,7 @@ fn eval_exclamation_operator_expression(right: &object::Object) -> Rc<object::Ob
 
 fn eval_minus_prefix_operator_expression(right: &object::Object) -> Result<Rc<object::Object>> {
     if let object::Object::Integer(int_obj) = right {
-        return Ok(Rc::new(Object::int(-int_obj.value)));
+        return Ok(Rc::new(Object::int(-int_obj.borrow().value)));
     }
 
     bail!("minus is not prefix operator for {}.", right);
@@ -246,12 +256,12 @@ fn eval_infix_expression(
         "!=" => Ok(Rc::new(Object::bool(*right != *left))),
         _ => {
             if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
-                return eval_integer_infix_expression(operator, x, y)
+                return eval_integer_infix_expression(operator, &*x.borrow(), &*y.borrow())
                     .context("failed to eval infix expression for integers.");
             }
 
             if let (Object::String(x), Object::String(y)) = (left, right) {
-                return eval_string_infix_expression(operator, x, y)
+                return eval_string_infix_expression(operator, &*x.borrow(), &*y.borrow())
                     .context("failed to eval infix expression for string.");
             }
 
@@ -315,7 +325,7 @@ fn eval_if_expression(
 
 fn is_truethy(obj: Rc<object::Object>) -> bool {
     match &*obj {
-        Object::Bool(b) => b.value,
+        Object::Bool(b) => b.borrow().value,
         Object::Null(_) => false,
         _ => true,
     }
@@ -334,7 +344,7 @@ fn eval_identifier(ident: &ast::Identifier, env: Rc<RefCell<Environment>>) -> Re
 fn eval_index_expression(left: Rc<Object>, index: Rc<Object>) -> Result<Rc<Object>> {
     match (&*left, &*index) {
         (Object::Array(array), Object::Integer(integer)) => {
-            let obj = if let Some(obj) = array.array.get(integer.value as usize) {
+            let obj = if let Some(obj) = array.borrow().array.get(integer.borrow().value as usize) {
                 obj.clone()
             } else {
                 Rc::new(Object::null())
@@ -372,35 +382,39 @@ fn apply_function(f: Rc<Object>, args: &[Rc<Object>]) -> Result<Rc<Object>> {
     match &*f {
         Object::Function(func) => {
             let func_env = func
+                .borrow()
                 .create_function_env(args)
                 .context("failed to create environment for function")?;
 
-            let evaluated =
-                __eval(&func.body, func_env).context("failed to eval body of function.")?;
+            let evaluated = __eval(&func.borrow().body, func_env)
+                .context("failed to eval body of function.")?;
 
             Ok(unwrap_return_value(evaluated))
         }
-        Object::Builtin(builtin) => (builtin.func)(args).context("failed to run builtin function."),
+        Object::Builtin(builtin) => {
+            (builtin.borrow().func)(args).context("failed to run builtin function.")
+        }
         _ => Err(anyhow!("not a function: {f:?}")),
     }
 }
 
 fn unwrap_return_value(obj: Rc<Object>) -> Rc<Object> {
     match &*obj {
-        Object::ReturnValue(r) => r.value.clone(),
+        Object::ReturnValue(r) => r.borrow().value.clone(),
         _ => obj,
     }
 }
 
 mod test {
     use std::ascii;
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     use anyhow::{Result, bail};
 
     use crate::ast::NodeInterface;
     use crate::lexer::Lexer;
-    use crate::object::{self, Object};
+    use crate::object::{self, Environment, Object};
     use crate::parser::Parser;
     use crate::utils::print_errors;
 
@@ -543,8 +557,8 @@ mod test {
             let obj = test_eval(&test.input);
 
             let r = match &test.expected {
-                object::Object::Bool(b) => test_bool_object(&obj, b.value),
-                object::Object::Integer(i) => test_integer_object(&obj, i.value),
+                object::Object::Bool(b) => test_bool_object(&obj, b.borrow().value),
+                object::Object::Integer(i) => test_integer_object(&obj, i.borrow().value),
                 object::Object::Null(n) => test_null_object(&obj),
                 object::Object::ReturnValue(_) => panic!("program returned ReturnValue."),
                 _ => unimplemented!(),
@@ -638,18 +652,18 @@ mod test {
             panic!("object is not Function. got: {evaluated:?}");
         };
 
-        if fn_obj.params.len() != 1 {
+        if fn_obj.borrow().params.len() != 1 {
             panic!("number of parameter for function is wrong.");
         }
 
-        if fn_obj.params[0].string().as_str() != "x" {
+        if fn_obj.borrow().params[0].string().as_str() != "x" {
             panic!("parameter is not 'x'");
         }
 
         let expected_body = "(x + 2)";
 
-        if fn_obj.body.string().as_str() != expected_body {
-            panic!("body is not {expected_body}. got: {}", fn_obj);
+        if fn_obj.borrow().body.string().as_str() != expected_body {
+            panic!("body is not {expected_body}. got: {}", fn_obj.borrow());
         }
     }
 
@@ -716,10 +730,10 @@ mod test {
             panic!("object is not StringLiteral");
         };
 
-        if str_obj.value.as_str() != "Hello World!" {
+        if str_obj.borrow().value.as_str() != "Hello World!" {
             panic!(
                 "literal.value is not \"Hello World!\". got: {}",
-                str_obj.value.as_str()
+                str_obj.borrow().value.as_str()
             );
         }
     }
@@ -736,10 +750,10 @@ mod test {
             panic!("object is not StringLiteral");
         };
 
-        if str_obj.value.as_str() != "Hello World!" {
+        if str_obj.borrow().value.as_str() != "Hello World!" {
             panic!(
                 "literal.value is not \"Hello World!\". got: {}",
-                str_obj.value.as_str()
+                str_obj.borrow().value.as_str()
             );
         }
     }
@@ -791,13 +805,16 @@ mod test {
             panic!("the object is not Array. got: {evaluated:?}",);
         };
 
-        if array.array.len() != 3 {
-            panic!("the length of array is not 3. got: {}", array.array.len());
+        if array.borrow().array.len() != 3 {
+            panic!(
+                "the length of array is not 3. got: {}",
+                array.borrow().array.len()
+            );
         }
 
-        test_integer_object(&array.array[0], 1);
-        test_integer_object(&array.array[1], 4);
-        test_integer_object(&array.array[2], 6);
+        test_integer_object(&array.borrow().array[0], 1);
+        test_integer_object(&array.borrow().array[1], 4);
+        test_integer_object(&array.borrow().array[2], 6);
     }
 
     #[test]
@@ -839,11 +856,12 @@ mod test {
             let evaluated = &*test_eval(&test.input);
 
             match (evaluated, &test.expected) {
-                (Object::Integer(_), Object::Integer(y)) => test_integer_object(evaluated, y.value)
-                    .unwrap_or_else(|err| {
+                (Object::Integer(_), Object::Integer(y)) => {
+                    test_integer_object(evaluated, y.borrow().value).unwrap_or_else(|err| {
                         print_errors(format!("test {} failed.", i).as_str(), err);
                         panic!();
-                    }),
+                    })
+                }
                 (Object::Null(_), Object::Null(_)) => {}
                 _ => panic!(
                     "unexpected or unsupported objects. evaluated: {:?}, expected: {:?}",
@@ -861,7 +879,9 @@ mod test {
             panic!("failed to parse.");
         });
 
-        eval(&program).unwrap_or_else(|e| {
+        let env = Rc::new(RefCell::new(Environment::new(None)));
+
+        eval(&program, env).unwrap_or_else(|e| {
             print_errors("failed to evaluate", e);
             panic!()
         })
@@ -874,8 +894,11 @@ mod test {
             bail!("obj is not Integer. got: {obj:?}");
         };
 
-        if int_obj.value != expected {
-            bail!("int_obj.value is not {expected}. got: {}", int_obj.value);
+        if int_obj.borrow().value != expected {
+            bail!(
+                "int_obj.value is not {expected}. got: {}",
+                int_obj.borrow().value
+            );
         }
 
         Ok(())
@@ -888,8 +911,11 @@ mod test {
             bail!("obj is not Bool. got: {obj:?}");
         };
 
-        if bool_obj.value != expected {
-            bail!("bool_obj.value is not {expected}. got: {}", bool_obj.value);
+        if bool_obj.borrow().value != expected {
+            bail!(
+                "bool_obj.value is not {expected}. got: {}",
+                bool_obj.borrow().value
+            );
         }
 
         Ok(())
