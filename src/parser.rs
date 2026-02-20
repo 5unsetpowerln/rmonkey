@@ -6,9 +6,9 @@ use indexmap::IndexMap;
 
 use crate::ast::{
     ArrayLiteral, BlockStatement, BoolLiteral, CallExpression, Expression, ExpressionStatement,
-    FunctionLiteral, HashLiteral, Identifier, IfExpression, IndexExpression, IndexMapWrapper,
-    InfixExpression, IntegerLiteral, LetStatement, PrefixExpression, Program, ReturnStatement,
-    Statement, StringLiteral,
+    FunctionLiteral, HashLiteral, Identifier, IfExpression, IndexExpression, InfixExpression,
+    IntegerLiteral, LetStatement, PrefixExpression, Program, ReturnStatement, Statement,
+    StringLiteral,
 };
 use crate::lexer::Lexer;
 use crate::token::{Token, TokenKind};
@@ -302,10 +302,7 @@ impl<'a> Parser<'a> {
         if self.peek_token_is(TokenKind::RightBrace) {
             self.next_token();
 
-            return Ok(Expression::HashLiteral(HashLiteral::new(
-                token,
-                IndexMapWrapper::new(),
-            )));
+            return Ok(Expression::HashLiteral(HashLiteral::new(token, Vec::new())));
         }
 
         self.next_token();
@@ -313,7 +310,7 @@ impl<'a> Parser<'a> {
         // {a:b,c:d}
         //  ^
 
-        let mut map = IndexMapWrapper::new();
+        let mut map = Vec::new();
 
         loop {
             let left = self
@@ -333,7 +330,7 @@ impl<'a> Parser<'a> {
                 .parse_expression(OperationPrecedences::Lowest)
                 .context("failed to parse an expression in the hash.")?;
 
-            map.0.insert(left, right);
+            map.push((left, right));
 
             if !self.peek_token_is(TokenKind::Comma) {
                 break;

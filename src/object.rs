@@ -1,10 +1,11 @@
 use std::ascii;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fmt::Display;
+use std::hash::Hash;
 use std::rc::Rc;
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 
 use crate::ast::{self, ArrayLiteral, BoolLiteral, FunctionLiteral, NodeInterface};
 
@@ -12,14 +13,15 @@ pub trait ObjectInterface: Display {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Object {
-    Integer(Rc<RefCell<Integer>>),
-    Bool(Rc<RefCell<Bool>>),
+    Integer(Rc<RefCell<IntegerObject>>),
+    Bool(Rc<RefCell<BoolObject>>),
     Null(Rc<RefCell<Null>>),
     Function(Rc<RefCell<Function>>),
     ReturnValue(Rc<RefCell<ReturnValue>>),
     String(Rc<RefCell<StringObject>>),
     Builtin(Rc<RefCell<Builtin>>),
     Array(Rc<RefCell<Array>>),
+    Hash(Rc<RefCell<HashObject>>),
 }
 
 impl Object {
@@ -33,15 +35,16 @@ impl Object {
             Object::String(x) => x.clone(),
             Object::Builtin(x) => x.clone(),
             Object::Array(x) => x.clone(),
+            Object::Hash(x) => x.clone(),
         }
     }
 
     pub fn int(val: i64) -> Self {
-        Self::Integer(Rc::new(RefCell::new(Integer::new(val))))
+        Self::Integer(Rc::new(RefCell::new(IntegerObject::new(val))))
     }
 
     pub fn bool(value: bool) -> Self {
-        Self::Bool(Rc::new(RefCell::new(Bool::new(value))))
+        Self::Bool(Rc::new(RefCell::new(BoolObject::new(value))))
     }
 
     pub fn null() -> Self {
@@ -80,40 +83,40 @@ impl Display for Object {
 }
 
 // Integer
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Integer {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IntegerObject {
     pub value: i64,
 }
 
-impl Integer {
+impl IntegerObject {
     pub fn new(value: i64) -> Self {
         Self { value }
     }
 }
 
-impl ObjectInterface for Integer {}
+impl ObjectInterface for IntegerObject {}
 
-impl Display for Integer {
+impl Display for IntegerObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value)
     }
 }
 
 // Bool
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Bool {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BoolObject {
     pub value: bool,
 }
 
-impl Bool {
+impl BoolObject {
     pub const fn new(value: bool) -> Self {
         Self { value }
     }
 }
 
-impl ObjectInterface for Bool {}
+impl ObjectInterface for BoolObject {}
 
-impl Display for Bool {
+impl Display for BoolObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value)
     }
@@ -138,7 +141,7 @@ impl Display for Null {
 impl ObjectInterface for Null {}
 
 // String
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StringObject {
     pub value: Vec<ascii::Char>,
 }
@@ -276,6 +279,78 @@ impl Display for Array {
         write!(f, "{}", buffer.as_str())
     }
 }
+
+// Hash
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HashKeyObject {
+    String(Rc<RefCell<StringObject>>),
+    Integer(Rc<RefCell<IntegerObject>>),
+    Bool(Rc<RefCell<BoolObject>>),
+}
+
+impl HashKeyObject {
+    pub fn from_object(object: Rc<Object>) -> Result<Self> {
+        let s = match &*object {
+            Object::String(x) => Self::String(x.clone()),
+            Object::Integer(x) => Self::Integer(x.clone()),
+            Object::Bool(x) => Self::Bool(x.clone()),
+            _ => {
+                bail!(anyhow!("{:?} can't be key of hash.", object))
+            }
+        };
+
+        Ok(s)
+    }
+
+    fn as_interface(&self) -> Rc<RefCell<dyn ObjectInterface>> {
+        match self {
+            Self::String(x) => x.clone(),
+            Self::Integer(x) => x.clone(),
+            Self::Bool(x) => x.clone(),
+        }
+    }
+}
+
+impl Hash for HashKeyObject {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+
+        match self {
+            Self::String(x) => x.borrow().hash(state),
+            Self::Integer(x) => x.borrow().hash(state),
+            Self::Bool(x) => x.borrow().hash(state),
+        }
+    }
+}
+
+impl Display for HashKeyObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_interface().borrow())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashObject {
+    pairs: HashMap<HashKeyObject, Object>,
+}
+
+impl Display for HashObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buffer = String::new();
+
+        buffer.push_str("{\n");
+
+        for (k, v) in self.pairs.iter() {
+            buffer.push_str(format!("\t{} : {},\n", k, v).as_str());
+        }
+
+        buffer.push('}');
+
+        write!(f, "{buffer}")
+    }
+}
+
+impl ObjectInterface for HashObject {}
 
 // Builtin
 pub type BuiltinFunction = fn(&[Rc<Object>]) -> Result<Rc<Object>>;

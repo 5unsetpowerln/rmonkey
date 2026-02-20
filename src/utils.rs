@@ -1,3 +1,6 @@
+use std::hash::Hash;
+use std::rc::Rc;
+
 use anyhow::Error;
 
 pub fn print_errors(msg: &str, err: Error) {

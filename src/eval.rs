@@ -273,8 +273,8 @@ fn eval_infix_expression(
 
 fn eval_integer_infix_expression(
     operator: &[ascii::Char],
-    left: &object::Integer,
-    right: &object::Integer,
+    left: &object::IntegerObject,
+    right: &object::IntegerObject,
 ) -> Result<Rc<object::Object>> {
     match operator.as_str() {
         "+" => Ok(Rc::new(Object::int(left.value + right.value))),
