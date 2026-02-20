@@ -1574,15 +1574,15 @@ mod test {
             panic!("expr_stmt.value is not HashLiteral");
         };
 
-        if hash_literal.pairs.0.len() != 3 {
+        if hash_literal.pairs.len() != 3 {
             panic!(
                 "hash_literal.pairs has wrong length. got: {}, expected: {}",
-                hash_literal.pairs.0.len(),
+                hash_literal.pairs.len(),
                 3
             );
         }
 
-        for (i, (key, value)) in hash_literal.pairs.0.iter().enumerate() {
+        for (i, (key, value)) in hash_literal.pairs.iter().enumerate() {
             println!("{key:?}, {:?}", expected[i]);
 
             test_string_literal(key, expected[i].0).unwrap_or_else(|err| {
@@ -1607,10 +1607,10 @@ mod test {
             panic!("expr_stmt.value is not HashLiteral");
         };
 
-        if hash_literal.pairs.0.len() != 0 {
+        if hash_literal.pairs.len() != 0 {
             panic!(
                 "hash_literal.pairs has wrong length. got: {}, expected: {}",
-                hash_literal.pairs.0.len(),
+                hash_literal.pairs.len(),
                 0
             );
         }
@@ -1660,15 +1660,15 @@ mod test {
             panic!("expr_stmt.value is not HashLiteral");
         };
 
-        if hash_literal.pairs.0.len() != 3 {
+        if hash_literal.pairs.len() != 3 {
             panic!(
                 "hash_literal.pairs has wrong length. got: {}, expected: {}",
-                hash_literal.pairs.0.len(),
+                hash_literal.pairs.len(),
                 3
             );
         }
 
-        for (i, (key, value)) in hash_literal.pairs.0.iter().enumerate() {
+        for (i, (key, value)) in hash_literal.pairs.iter().enumerate() {
             test_string_literal(key, expected[i].0).unwrap_or_else(|err| {
                 print_errors(format!("test {i} failed").as_str(), err);
                 panic!();

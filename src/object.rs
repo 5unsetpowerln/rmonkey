@@ -302,6 +302,20 @@ impl HashKeyObject {
         Ok(s)
     }
 
+    pub fn str(value: &str) -> Self {
+        Self::String(Rc::new(RefCell::new(StringObject::new(
+            value.as_ascii().unwrap(),
+        ))))
+    }
+
+    pub fn int(value: i64) -> Self {
+        Self::Integer(Rc::new(RefCell::new(IntegerObject::new(value))))
+    }
+
+    pub fn bool(value: bool) -> Self {
+        Self::Bool(Rc::new(RefCell::new(BoolObject::new(value))))
+    }
+
     fn as_interface(&self) -> Rc<RefCell<dyn ObjectInterface>> {
         match self {
             Self::String(x) => x.clone(),
@@ -331,7 +345,13 @@ impl Display for HashKeyObject {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashObject {
-    pairs: HashMap<HashKeyObject, Object>,
+    pub pairs: HashMap<HashKeyObject, Rc<Object>>,
+}
+
+impl HashObject {
+    pub fn new(pairs: HashMap<HashKeyObject, Rc<Object>>) -> Self {
+        Self { pairs }
+    }
 }
 
 impl Display for HashObject {

@@ -1,12 +1,13 @@
 use core::ascii;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::mem::discriminant;
 use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 
 use crate::ast::{Node, NodeInterface};
-use crate::object::{Environment, Object, create_false, create_null, create_true};
+use crate::object::{Environment, HashObject, Object, create_false, create_null, create_true};
 use crate::{ast, builtins, object};
 
 pub fn eval<T: ast::NodeInterface>(
@@ -132,6 +133,9 @@ fn __eval<T: ast::NodeInterface>(
             Ok(Rc::new(Object::Array(Rc::new(RefCell::new(
                 object::Array::new(&elements),
             )))))
+        }
+        Node::HashLiteral(literal) => {
+            eval_hash_literal(literal, env).context("failed to eval hash literal.")
         }
         _ => unimplemented!(),
     }
@@ -345,20 +349,70 @@ fn eval_identifier(ident: &ast::Identifier, env: Rc<RefCell<Environment>>) -> Re
 fn eval_index_expression(left: Rc<Object>, index: Rc<Object>) -> Result<Rc<Object>> {
     match (&*left, &*index) {
         (Object::Array(array), Object::Integer(integer)) => {
-            let obj = if let Some(obj) = array.borrow().array.get(integer.borrow().value as usize) {
-                obj.clone()
-            } else {
-                Rc::new(Object::null())
-            };
-
-            Ok(obj)
+            eval_array_index_expression(array.clone(), integer.clone())
+                .context("failed to eval index expression for array.")
         }
+        (Object::Hash(hash_obj), _) => eval_hash_index_expression(hash_obj.clone(), index)
+            .context("failed to eval index expression for hash."),
         _ => Err(anyhow!(
             "unsupported pattern of left and index object. left object: {:?}, index object: {:?}",
             &*left,
             &*index
         )),
     }
+}
+
+fn eval_array_index_expression(
+    array: Rc<RefCell<object::Array>>,
+    index: Rc<RefCell<object::IntegerObject>>,
+) -> Result<Rc<Object>> {
+    let value = match array.borrow().array.get(index.borrow().value as usize) {
+        Some(x) => x.clone(),
+        None => create_null(),
+    };
+
+    Ok(value)
+}
+
+fn eval_hash_index_expression(
+    hash_obj: Rc<RefCell<HashObject>>,
+    key_obj: Rc<Object>,
+) -> Result<Rc<Object>> {
+    let key = object::HashKeyObject::from_object(key_obj)
+        .context("failed to eval key object as key of hash.")?;
+
+    let value = match hash_obj.borrow().pairs.get(&key) {
+        Some(x) => x.clone(),
+        None => create_null(),
+    };
+
+    Ok(value)
+}
+
+// hash
+fn eval_hash_literal(
+    hash_literal: &ast::HashLiteral,
+    env: Rc<RefCell<Environment>>,
+) -> Result<Rc<Object>> {
+    let mut pairs = HashMap::new();
+
+    for (i, (key, value)) in hash_literal.pairs.iter().enumerate() {
+        let key_obj = __eval(key, env.clone())
+            .with_context(|| format!("failed to eval key of key-value pair {}.", i))?;
+
+        let value_obj = __eval(value, env.clone())
+            .with_context(|| format!("failed to eval value of key-value pair {}.", i))?;
+
+        pairs.insert(
+            object::HashKeyObject::from_object(key_obj)
+                .with_context(|| format!("failed to eval key-value pair {}.", i))?,
+            value_obj,
+        );
+    }
+
+    Ok(Rc::new(Object::Hash(Rc::new(RefCell::new(
+        object::HashObject::new(pairs),
+    )))))
 }
 
 //
@@ -415,7 +469,7 @@ mod test {
 
     use crate::ast::NodeInterface;
     use crate::lexer::Lexer;
-    use crate::object::{self, Environment, Object};
+    use crate::object::{self, Environment, HashKeyObject, Object};
     use crate::parser::Parser;
     use crate::utils::print_errors;
 
@@ -868,6 +922,105 @@ mod test {
                     "unexpected or unsupported objects. evaluated: {:?}, expected: {:?}",
                     evaluated, &test.expected
                 ),
+            }
+        }
+    }
+
+    #[test]
+    fn test_hash_literals() {
+        let input = "let two = \"two\";
+            {
+                \"one\": 10 - 9,
+                two: 1 + 1,
+                \"thr\" + \"ee\": 6 / 2,
+                4: 4,
+                true: 5,
+                false: 6
+            }"
+        .as_ascii()
+        .unwrap();
+
+        let expected = vec![
+            (HashKeyObject::str("one"), 1),
+            (HashKeyObject::str("two"), 2),
+            (HashKeyObject::str("three"), 3),
+            (HashKeyObject::int(4), 4),
+            (HashKeyObject::bool(true), 5),
+            (HashKeyObject::bool(false), 6),
+        ];
+
+        let evaluated = &*test_eval(input);
+
+        let hash_obj = if let Object::Hash(x) = evaluated {
+            x
+        } else {
+            panic!("evaluated is not HashObject. got: {evaluated:?}");
+        }
+        .borrow();
+
+        if expected.len() != hash_obj.pairs.len() {
+            panic!(
+                "length of expected and length of evaluated is not same. expected: {}. got: {}",
+                expected.len(),
+                hash_obj.pairs.len()
+            );
+        }
+
+        for (i, (expected_key, expected_value)) in expected.iter().enumerate() {
+            let value = hash_obj.pairs.get(expected_key).unwrap_or_else(|| {
+                panic!(
+                    "test {} failed. no value associated to {}.",
+                    i, expected_key
+                );
+            });
+
+            test_integer_object(value, *expected_value).unwrap_or_else(|err| {
+                print_errors(format!("test {} failed", i).as_str(), err);
+                panic!()
+            });
+        }
+    }
+
+    #[test]
+    fn test_hash_index_expression() {
+        #[derive(Debug)]
+        struct Test {
+            input: Vec<ascii::Char>,
+            expected: Object,
+        }
+        impl Test {
+            fn new(input: &str, expected: Object) -> Self {
+                Self {
+                    input: input.as_ascii().unwrap().to_vec(),
+                    expected,
+                }
+            }
+        }
+
+        let tests = vec![
+            Test::new("{\"foo\": 5}[\"foo\"]", Object::int(5)),
+            Test::new("{\"foo\": 5}[\"bar\"]", Object::null()),
+            Test::new("let key = \"foo\"; {\"foo\": 5}[key]", Object::int(5)),
+            Test::new("{}[\"foo\"]", Object::null()),
+            Test::new("{5: 5}[5]", Object::int(5)),
+            Test::new("{true: 5}[true]", Object::int(5)),
+            Test::new("{false: 5}[false]", Object::int(5)),
+        ];
+
+        for (i, test) in tests.iter().enumerate() {
+            let evaluated = &*test_eval(&test.input);
+
+            match (evaluated, &test.expected) {
+                (Object::Integer(x), Object::Integer(y)) => {
+                    test_integer_object(evaluated, y.borrow().value).unwrap_or_else(|err| {
+                        print_errors(format!("test {} failed", i).as_str(), err);
+                        panic!()
+                    })
+                }
+                (Object::Null(_), Object::Null(_)) => {}
+                (x, y) => {
+                    panic!("test {i} failed. expected: {y:?}, got: {x:?}");
+                }
             }
         }
     }
