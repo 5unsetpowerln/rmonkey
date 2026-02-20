@@ -37,7 +37,7 @@ pub trait NodeInterface {
 }
 
 // Expression
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expression {
     Identifier(Identifier),
     IntegerLiteral(IntegerLiteral),
@@ -91,7 +91,7 @@ impl NodeInterface for Expression {
 }
 
 // Identifier
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identifier {
     pub token: Token,
     pub value: Vec<ascii::Char>,
@@ -126,7 +126,7 @@ impl NodeInterface for Identifier {
 }
 
 // IntegerLiteral
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntegerLiteral {
     pub token: Token,
     pub value: i64,
@@ -153,7 +153,7 @@ impl NodeInterface for IntegerLiteral {
 }
 
 // Boolean
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoolLiteral {
     pub token: Token,
     pub value: bool,
@@ -179,7 +179,7 @@ impl NodeInterface for BoolLiteral {
 }
 
 // StringLiteral
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StringLiteral {
     pub token: Token,
     pub value: Vec<ascii::Char>,
@@ -213,7 +213,7 @@ impl NodeInterface for StringLiteral {
 }
 
 // ArrayLiteral
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArrayLiteral {
     pub token: Token,
     pub elements: Vec<Expression>,
@@ -256,40 +256,14 @@ impl NodeInterface for ArrayLiteral {
 }
 
 // HashLiteral
-#[derive(Debug, Clone)]
-pub struct IndexMapWrapper<K, V>(pub IndexMap<K, V>);
-
-impl<K, V> IndexMapWrapper<K, V> {
-    pub fn new() -> Self {
-        Self(IndexMap::new())
-    }
-}
-
-impl<K: PartialEq, V: PartialEq> PartialEq for IndexMapWrapper<K, V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.len() == other.0.len() && self.0.iter().zip(other.0.iter()).all(|(x, y)| x == y)
-    }
-}
-
-impl<K: Eq, V: Eq> Eq for IndexMapWrapper<K, V> {}
-
-impl<K: Hash, V: Hash> Hash for IndexMapWrapper<K, V> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        for (k, v) in self.0.iter() {
-            k.hash(state);
-            v.hash(state);
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashLiteral {
     pub token: Token,
-    pub pairs: IndexMapWrapper<Expression, Expression>,
+    pub pairs: Vec<(Expression, Expression)>,
 }
 
 impl HashLiteral {
-    pub fn new(token: Token, pairs: IndexMapWrapper<Expression, Expression>) -> Self {
+    pub fn new(token: Token, pairs: Vec<(Expression, Expression)>) -> Self {
         Self { token, pairs }
     }
 }
@@ -308,14 +282,14 @@ impl NodeInterface for HashLiteral {
 
         buffer.push(ascii::Char::LeftCurlyBracket);
 
-        for (i, (k, v)) in self.pairs.0.iter().enumerate() {
+        for (i, (k, v)) in self.pairs.iter().enumerate() {
             buffer.extend(&k.string());
             buffer.push(ascii::Char::Space);
             buffer.push(ascii::Char::Colon);
             buffer.push(ascii::Char::Space);
             buffer.extend(&v.string());
 
-            if i < self.pairs.0.len() - 1 {
+            if i < self.pairs.len() - 1 {
                 buffer.push(ascii::Char::Comma);
                 buffer.push(ascii::Char::Space);
             }
@@ -328,7 +302,7 @@ impl NodeInterface for HashLiteral {
 }
 
 // PrefixExpression
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrefixExpression {
     pub token: Token,
     pub operator: Vec<ascii::Char>,
@@ -374,7 +348,7 @@ impl NodeInterface for PrefixExpression {
 }
 
 // InfixExpression
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InfixExpression {
     pub token: Token,
     pub operator: Vec<ascii::Char>,
@@ -421,7 +395,7 @@ impl NodeInterface for InfixExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IfExpression {
     pub token: Token,
     pub condition: Box<Expression>,
@@ -471,7 +445,7 @@ impl NodeInterface for IfExpression {
 }
 
 // FunctionLiteral
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionLiteral {
     pub token: Token,
     pub params: Vec<Identifier>,
@@ -515,7 +489,7 @@ impl NodeInterface for FunctionLiteral {
 }
 
 // CallExpression
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallExpression {
     pub token: Token,
     pub func: Box<Expression>,
@@ -559,7 +533,7 @@ impl NodeInterface for CallExpression {
 }
 
 // IndexExpression
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexExpression {
     pub token: Token,
     pub left: Box<Expression>,
@@ -600,7 +574,7 @@ impl NodeInterface for IndexExpression {
 }
 
 // BlockStatement
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockStatement {
     pub token: Token, // {
     pub statements: Vec<Statement>,
@@ -633,7 +607,7 @@ impl NodeInterface for BlockStatement {
 }
 
 // Statement
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Let(LetStatement),
     Return(ReturnStatement),
@@ -662,7 +636,7 @@ impl NodeInterface for Statement {
 }
 
 // LetStatement
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LetStatement {
     pub token: Token,
     pub name: Identifier,
@@ -710,7 +684,7 @@ impl NodeInterface for LetStatement {
 }
 
 // ReturnStatement
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReturnStatement {
     pub token: Token,
     pub value: Expression,
@@ -752,7 +726,7 @@ impl NodeInterface for ReturnStatement {
 }
 
 // ExpressionStatement
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpressionStatement {
     pub token: Token,
     pub value: Expression,
