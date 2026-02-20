@@ -22,6 +22,8 @@ pub fn eval<T: ast::NodeInterface>(
         .set("last", Rc::new(Object::builtin(builtins::last)));
     env.borrow_mut()
         .set("push", Rc::new(Object::builtin(builtins::push)));
+    env.borrow_mut()
+        .set("puts", Rc::new(Object::builtin(builtins::puts)));
 
     __eval(node, env)
 }
@@ -261,12 +263,12 @@ fn eval_infix_expression(
         "!=" => Ok(Rc::new(Object::bool(*right != *left))),
         _ => {
             if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
-                return eval_integer_infix_expression(operator, &*x.borrow(), &*y.borrow())
+                return eval_integer_infix_expression(operator, &x.borrow(), &y.borrow())
                     .context("failed to eval infix expression for integers.");
             }
 
             if let (Object::String(x), Object::String(y)) = (left, right) {
-                return eval_string_infix_expression(operator, &*x.borrow(), &*y.borrow())
+                return eval_string_infix_expression(operator, &x.borrow(), &y.borrow())
                     .context("failed to eval infix expression for string.");
             }
 

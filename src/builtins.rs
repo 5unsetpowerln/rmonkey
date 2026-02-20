@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
-use crate::object::Object;
+use crate::object::{Object, create_null};
 
 pub fn len(args: &[Rc<Object>]) -> Result<Rc<Object>> {
     ensure!(
@@ -78,4 +78,18 @@ pub fn push(args: &[Rc<Object>]) -> Result<Rc<Object>> {
         }
         _ => Err(anyhow!("{first_arg:?} is not supported by push.")),
     }
+}
+
+pub fn puts(args: &[Rc<Object>]) -> Result<Rc<Object>> {
+    ensure!(
+        args.len() == 1,
+        "wrong number of arguments. got: {}, expected: 1",
+        args.len()
+    );
+
+    let arg = &*args[0];
+
+    println!("{}", arg);
+
+    Ok(create_null())
 }
