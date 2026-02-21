@@ -88,7 +88,6 @@ impl Lexer {
                             return Token::new(TokenKind::Return, "return");
                         }
                         other => {
-                            println!("{:?}", other);
                             return Token::new(TokenKind::Ident, other);
                         }
                     };

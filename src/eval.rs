@@ -69,11 +69,7 @@ fn __eval<T: ast::NodeInterface>(
 ) -> Result<Option<Rc<object::Object>>> {
     match node.get_node() {
         // program
-        Node::Program(program) => {
-            let a = eval_program(program, env);
-            println!("{a:?}");
-            a
-        }
+        Node::Program(program) => eval_program(program, env),
         // statements
         Node::Statement(stmt) => match stmt {
             ast::Statement::Expression(x) => {
@@ -263,7 +259,7 @@ fn eval_program(
 ) -> Result<Option<Rc<object::Object>>> {
     let stmts = &program.statements;
 
-    for (_, stmt) in stmts.iter().enumerate() {
+    for stmt in stmts.iter() {
         if let Some(value) = __eval(stmt, env.clone()).context("failed to evaluate a statement.")? {
             return Ok(Some(unwrap_return_value(value)));
         }
