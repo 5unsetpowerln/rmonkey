@@ -4,19 +4,19 @@ use crate::token::{Token, TokenKind};
 
 #[derive(Debug)]
 pub struct Lexer {
-    input: Vec<ascii::Char>,
+    input: String,
     position: usize,      // current position in input (points to current char)
     read_position: usize, // current reading position in input (after current char)
-    c: ascii::Char,       // current char under examination
+    c: char,              // current char under examination
 }
 
 impl Lexer {
-    pub fn new(input: &[ascii::Char]) -> Self {
+    pub fn new(input: &str) -> Self {
         let mut self_ = Self {
-            input: input.to_vec(),
+            input: input.to_string(),
             position: 0,
             read_position: 0,
-            c: ascii::Char::Null,
+            c: ascii::Char::Null.to_char(),
         };
 
         self_.read_char();
@@ -28,102 +28,78 @@ impl Lexer {
         self.skip_whitespace();
 
         let token = match self.c {
-            ascii::Char::Null => Token::new(TokenKind::Eof, &[ascii::Char::Null]),
-            ascii::Char::EqualsSign => {
-                if self.peek_char() == ascii::Char::EqualsSign {
+            '\0' => Token::new(TokenKind::Eof, "\0"),
+            '=' => {
+                if self.peek_char() == '=' {
                     self.read_char();
-                    Token::new(TokenKind::Eq, unsafe { "==".as_ascii_unchecked() })
+                    Token::new(TokenKind::Eq, "==")
                 } else {
-                    Token::new(TokenKind::Assign, unsafe { "=".as_ascii_unchecked() })
+                    Token::new(TokenKind::Assign, "=")
                 }
             }
-            ascii::Char::PlusSign => {
-                Token::new(TokenKind::Plus, unsafe { "+".as_ascii_unchecked() })
-            }
-            ascii::Char::HyphenMinus => {
-                Token::new(TokenKind::Minus, unsafe { "-".as_ascii_unchecked() })
-            }
-            ascii::Char::ExclamationMark => {
-                if self.peek_char() == ascii::Char::EqualsSign {
+            '+' => Token::new(TokenKind::Plus, "+"),
+            '-' => Token::new(TokenKind::Minus, "-"),
+            '!' => {
+                if self.peek_char() == '=' {
                     self.read_char();
-                    Token::new(TokenKind::NotEq, unsafe { "!=".as_ascii_unchecked() })
+                    Token::new(TokenKind::NotEq, "!=")
                 } else {
-                    Token::new(TokenKind::Exclamation, unsafe { "!".as_ascii_unchecked() })
+                    Token::new(TokenKind::Exclamation, "!")
                 }
             }
-            ascii::Char::Asterisk => {
-                Token::new(TokenKind::Asterisk, unsafe { "*".as_ascii_unchecked() })
-            }
-            ascii::Char::Solidus => {
-                Token::new(TokenKind::Slash, unsafe { "/".as_ascii_unchecked() })
-            }
-            ascii::Char::LessThanSign => {
-                Token::new(TokenKind::LessThan, unsafe { "<".as_ascii_unchecked() })
-            }
-            ascii::Char::GreaterThanSign => {
-                Token::new(TokenKind::GreaterThan, unsafe { ">".as_ascii_unchecked() })
-            }
-            ascii::Char::Comma => Token::new(TokenKind::Comma, unsafe { ",".as_ascii_unchecked() }),
-            ascii::Char::Semicolon => {
-                Token::new(TokenKind::Semicolon, unsafe { ";".as_ascii_unchecked() })
-            }
-            ascii::Char::LeftParenthesis => {
-                Token::new(TokenKind::LeftParen, unsafe { "(".as_ascii_unchecked() })
-            }
-            ascii::Char::RightParenthesis => {
-                Token::new(TokenKind::RightParen, unsafe { ")".as_ascii_unchecked() })
-            }
-            ascii::Char::LeftCurlyBracket => {
-                Token::new(TokenKind::LeftBrace, unsafe { "{".as_ascii_unchecked() })
-            }
-            ascii::Char::RightCurlyBracket => {
-                Token::new(TokenKind::RightBrace, unsafe { "}".as_ascii_unchecked() })
-            }
-            ascii::Char::QuotationMark => Token::new(TokenKind::String, &self.read_string()),
-            ascii::Char::LeftSquareBracket => {
-                Token::new(TokenKind::LeftBracket, "[".as_ascii().unwrap())
-            }
-            ascii::Char::RightSquareBracket => {
-                Token::new(TokenKind::RightBracket, "]".as_ascii().unwrap())
-            }
-            ascii::Char::Colon => Token::new(TokenKind::Colon, ":".as_ascii().unwrap()),
+            '*' => Token::new(TokenKind::Asterisk, "*"),
+            '/' => Token::new(TokenKind::Slash, "/"),
+            '<' => Token::new(TokenKind::LessThan, "<"),
+            '>' => Token::new(TokenKind::GreaterThan, ">"),
+            ',' => Token::new(TokenKind::Comma, ","),
+            ';' => Token::new(TokenKind::Semicolon, ";"),
+            '(' => Token::new(TokenKind::LeftParen, "("),
+            ')' => Token::new(TokenKind::RightParen, ")"),
+            '{' => Token::new(TokenKind::LeftBrace, "{"),
+            '}' => Token::new(TokenKind::RightBrace, "}"),
+            '"' => Token::new(TokenKind::String, &self.read_string()),
+            '[' => Token::new(TokenKind::LeftBracket, "["),
+            ']' => Token::new(TokenKind::RightBracket, "]"),
+            ':' => Token::new(TokenKind::Colon, ":"),
             _ => {
                 if is_letter(self.c) {
                     // a~z/A~Z/_から始まる場合はidentifier/keywordとして解釈する
                     // read_identifiersがread_charを呼び出すので早期リターンする
-                    return match self.read_identifiers().as_str() {
+                    match self.read_identifier().as_str() {
                         "fn" => {
-                            Token::new(TokenKind::Function, unsafe { "fn".as_ascii_unchecked() })
+                            return Token::new(TokenKind::Function, "fn");
                         }
-                        "let" => Token::new(TokenKind::Let, unsafe { "let".as_ascii_unchecked() }),
+                        "let" => {
+                            return Token::new(TokenKind::Let, "let");
+                        }
                         "true" => {
-                            Token::new(TokenKind::True, unsafe { "true".as_ascii_unchecked() })
+                            return Token::new(TokenKind::True, "true");
                         }
                         "false" => {
-                            Token::new(TokenKind::False, unsafe { "false".as_ascii_unchecked() })
+                            return Token::new(TokenKind::False, "false");
                         }
-                        "if" => Token::new(TokenKind::If, unsafe { "if".as_ascii_unchecked() }),
+                        "if" => {
+                            return Token::new(TokenKind::If, "if");
+                        }
                         "else" => {
-                            Token::new(TokenKind::Else, unsafe { "else".as_ascii_unchecked() })
+                            return Token::new(TokenKind::Else, "else");
                         }
                         "return" => {
-                            Token::new(TokenKind::Return, unsafe { "return".as_ascii_unchecked() })
+                            return Token::new(TokenKind::Return, "return");
                         }
-                        other => Token::new(
-                            TokenKind::Ident,
-                            other
-                                .as_ascii()
-                                .expect("failed to parse an identifier as ascii"),
-                        ),
+                        other => {
+                            println!("{:?}", other);
+                            return Token::new(TokenKind::Ident, other);
+                        }
                     };
                 } else if is_digit(self.c) {
                     // 0~9から始まる場合はINTとして解釈する
                     // read_numberがread_charを呼び出すので早期リターンする
 
-                    return Token::new(TokenKind::Int, self.read_number());
+                    return Token::new(TokenKind::Int, self.read_number().as_str());
                 } else {
                     // それ以外はIllegal
-                    Token::new(TokenKind::Illegal, &[self.c])
+                    Token::new(TokenKind::Illegal, self.c.to_string().as_str())
                 }
             }
         };
@@ -133,75 +109,82 @@ impl Lexer {
         token
     }
 
-    fn read_string(&mut self) -> Vec<ascii::Char> {
+    fn read_string(&mut self) -> String {
         let position = self.position + 1;
 
         loop {
             self.read_char();
-            if self.c == ascii::Char::QuotationMark || self.c == ascii::Char::Null {
+            if self.c == '"' || self.c == '\0' {
                 break;
             }
         }
 
-        self.input[position..self.position].to_vec()
+        self.input
+            .chars()
+            .skip(position)
+            .take(self.position - position)
+            .collect()
     }
 
     fn read_char(&mut self) {
-        if let Some(c) = self.input.get(self.read_position) {
-            self.c = *c;
+        if let Some(c) = self.input.chars().nth(self.read_position) {
+            self.c = c;
         } else {
-            self.c = ascii::Char::Null;
+            self.c = '\0';
         }
 
         self.position = self.read_position;
         self.read_position += 1;
     }
 
-    fn read_identifiers(&mut self) -> &[ascii::Char] {
+    fn read_identifier(&mut self) -> String {
         let position = self.position;
+
         while is_letter(self.c) {
             self.read_char();
         }
 
-        self.input.get(position..self.position).unwrap()
+        self.input
+            .chars()
+            .skip(position)
+            .take(self.position - position)
+            .collect::<String>()
     }
 
     fn skip_whitespace(&mut self) {
-        while self.c == ascii::Char::Space
-            || self.c == ascii::Char::CharacterTabulation
-            || self.c == ascii::Char::LineFeed
-            || self.c == ascii::Char::CarriageReturn
-        {
+        while self.c == ' ' || self.c == '\t' || self.c == '\n' || self.c == '\r' {
             self.read_char();
         }
     }
 
-    fn read_number(&mut self) -> &[ascii::Char] {
+    fn read_number(&mut self) -> String {
         let position = self.position;
         while is_digit(self.c) {
             self.read_char();
         }
 
-        self.input.get(position..self.position).unwrap()
+        self.input
+            .chars()
+            .skip(position)
+            .take(self.position - position)
+            .collect::<String>()
     }
 
-    fn peek_char(&mut self) -> ascii::Char {
+    fn peek_char(&mut self) -> char {
         if self.read_position >= self.input.len() {
-            return ascii::Char::Null;
+            return '\0';
         }
 
-        self.input[self.read_position]
+        self.input.chars().nth(self.read_position).unwrap()
     }
 }
 
-fn is_letter(c: ascii::Char) -> bool {
-    (ascii::Char::SmallA..=ascii::Char::SmallZ).contains(&c)
-        || (ascii::Char::CapitalA..ascii::Char::CapitalZ).contains(&c)
-        || c == ascii::Char::LowLine
+fn is_letter(c: char) -> bool {
+    c.is_ascii_lowercase() || c.is_ascii_uppercase() || c == '_'
 }
 
-fn is_digit(c: ascii::Char) -> bool {
-    (ascii::Char::Digit0..=ascii::Char::Digit9).contains(&c)
+fn is_digit(c: char) -> bool {
+    c.is_ascii_digit()
 }
 
 #[cfg(test)]
@@ -214,7 +197,7 @@ mod test {
 
     struct Test {
         pub expected_kind: TokenKind,
-        pub expected_literal: Vec<ascii::Char>,
+        pub expected_literal: String,
     }
 
     impl Test {
@@ -222,8 +205,43 @@ mod test {
         fn new(kind: TokenKind, literal: &str) -> Self {
             Self {
                 expected_kind: kind,
-                expected_literal: literal.as_ascii().unwrap().to_vec(),
+                expected_literal: literal.to_string(),
             }
+        }
+    }
+
+    #[test]
+    fn read_char() {
+        let input = "let five = 5;";
+        let mut lexer = Lexer::new(input);
+
+        assert!(lexer.position == 0);
+        assert!(lexer.read_position == 1);
+        assert!(lexer.peek_char() == 'e');
+
+        lexer.read_char();
+
+        assert!(lexer.position == 1);
+        assert!(lexer.read_position == 2);
+        assert!(lexer.c == 'e');
+        assert!(lexer.peek_char() == 't');
+    }
+
+    #[test]
+    fn read_identifier() {
+        let input = "let five = 5;";
+        let mut lexer = Lexer::new(input);
+
+        let ident = lexer.read_identifier();
+        if ident.as_str() != "let" {
+            panic!("expected: let, got: {}", ident.as_str());
+        }
+
+        lexer.skip_whitespace();
+
+        let ident = lexer.read_identifier();
+        if ident.as_str() != "five" {
+            panic!("expected: five, got: {}", ident.as_str());
         }
     }
 
@@ -253,9 +271,7 @@ mod test {
             \"foo bar\"
             [1, 2];
             {\"foo\": \"bar\"}
-            "
-        .as_ascii()
-        .unwrap();
+            ";
 
         let tests = vec![
             Test::new(TokenKind::Let, "let"),
@@ -380,9 +396,7 @@ mod test {
 
             let result = add(five, ten);
             !-/*5;
-            5 < 10 > 5;"
-            .as_ascii()
-            .unwrap();
+            5 < 10 > 5;";
 
         let tests = vec![
             Test::new(TokenKind::Let, "let"),
@@ -476,9 +490,7 @@ mod test {
             } else {
                 return false;
             }
-            "
-        .as_ascii()
-        .unwrap();
+            ";
 
         let tests = vec![
             Test::new(TokenKind::Let, "let"),
@@ -592,9 +604,7 @@ mod test {
 
             10 == 10;
             10 != 9;
-            "
-        .as_ascii()
-        .unwrap();
+            ";
 
         let tests = vec![
             Test::new(TokenKind::Let, "let"),

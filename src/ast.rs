@@ -1,7 +1,6 @@
 use core::ascii;
-use std::hash::{Hash, Hasher};
-
-use indexmap::IndexMap;
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
 
 use crate::token::Token;
 
@@ -28,12 +27,11 @@ pub enum Node<'a> {
     HashLiteral(&'a HashLiteral),
 }
 
-pub trait NodeInterface {
+pub trait NodeInterface: Display + Debug {
     /// 実体がenumのNode、すなわちExpressionやStatementは、Node::Expression/Statementを返すのではなくて、ラップされているNodeを返す。
     /// 例えば、Expression(IntegerLiteral)に対してget_nodeを呼ぶと、Node::IntegerLiteralが返される。
     fn get_node(&self) -> Node;
-    fn token_literal(&self) -> Vec<ascii::Char>;
-    fn string(&self) -> Vec<ascii::Char>;
+    fn get_token(&self) -> Token;
 }
 
 // Expression
@@ -58,7 +56,7 @@ impl Expression {
         Self::Identifier(Identifier::empty())
     }
 
-    fn as_node_interface(&self) -> &dyn NodeInterface {
+    fn as_interface(&self) -> &dyn NodeInterface {
         match self {
             Self::Identifier(x) => x,
             Self::IntegerLiteral(x) => x,
@@ -81,12 +79,14 @@ impl NodeInterface for Expression {
         Node::Expression(self)
     }
 
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.as_node_interface().token_literal()
+    fn get_token(&self) -> Token {
+        self.as_interface().get_token()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        self.as_node_interface().string()
+impl Display for Expression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_interface())
     }
 }
 
@@ -94,20 +94,20 @@ impl NodeInterface for Expression {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Identifier {
     pub token: Token,
-    pub value: Vec<ascii::Char>,
+    pub value: String,
 }
 impl Identifier {
-    pub fn new(token: Token, value: &[ascii::Char]) -> Self {
+    pub fn new(token: Token, value: &str) -> Self {
         Self {
             token,
-            value: value.to_vec(),
+            value: value.to_string(),
         }
     }
 
     pub fn empty() -> Self {
         Self {
             token: Token::empty(),
-            value: Vec::new(),
+            value: String::new(),
         }
     }
 }
@@ -116,12 +116,15 @@ impl NodeInterface for Identifier {
     fn get_node(&self) -> Node {
         Node::Identifier(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
-    }
 
-    fn string(&self) -> Vec<ascii::Char> {
-        self.token_literal()
+    fn get_token(&self) -> Token {
+        self.token.clone()
+    }
+}
+
+impl Display for Identifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value.as_str())
     }
 }
 
@@ -143,12 +146,14 @@ impl NodeInterface for IntegerLiteral {
         Node::IntegerLiteral(self)
     }
 
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        self.token_literal()
+impl Display for IntegerLiteral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
     }
 }
 
@@ -169,12 +174,14 @@ impl NodeInterface for BoolLiteral {
     fn get_node(&self) -> Node {
         Node::BoolLiteral(self)
     }
-
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
-    fn string(&self) -> Vec<ascii::Char> {
-        self.token_literal()
+}
+
+impl Display for BoolLiteral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
     }
 }
 
@@ -182,14 +189,14 @@ impl NodeInterface for BoolLiteral {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StringLiteral {
     pub token: Token,
-    pub value: Vec<ascii::Char>,
+    pub value: String,
 }
 
 impl StringLiteral {
-    pub fn new(token: Token, value: &[ascii::Char]) -> Self {
+    pub fn new(token: Token, value: &str) -> Self {
         Self {
             token,
-            value: value.to_vec(),
+            value: value.to_string(),
         }
     }
 }
@@ -198,17 +205,14 @@ impl NodeInterface for StringLiteral {
     fn get_node(&self) -> Node {
         Node::StringLiteral(self)
     }
-
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-        buffer.push(ascii::Char::QuotationMark);
-        buffer.extend(&self.value);
-        buffer.push(ascii::Char::QuotationMark);
-        buffer
+impl Display for StringLiteral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\"{}\"", self.value.as_str())
     }
 }
 
@@ -233,25 +237,20 @@ impl NodeInterface for ArrayLiteral {
         Node::ArrayLiteral(self)
     }
 
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
+impl Display for ArrayLiteral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let elements = self
+            .elements
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>();
 
-        buffer.push(ascii::Char::LeftSquareBracket);
-        for (i, element) in self.elements.iter().enumerate() {
-            buffer.extend(&element.string());
-
-            if i < self.elements.len() - 1 {
-                buffer.push(ascii::Char::Comma);
-                buffer.push(ascii::Char::Space);
-            }
-        }
-        buffer.push(ascii::Char::RightSquareBracket);
-
-        buffer
+        write!(f, "[{}]", elements.join(", "))
     }
 }
 
@@ -271,32 +270,20 @@ impl NodeInterface for HashLiteral {
     fn get_node(&self) -> Node {
         Node::HashLiteral(self)
     }
-
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
+impl Display for HashLiteral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let pairs = self
+            .pairs
+            .iter()
+            .map(|(k, v)| format!("{} : {}", k, v))
+            .collect::<Vec<String>>();
 
-        buffer.push(ascii::Char::LeftCurlyBracket);
-
-        for (i, (k, v)) in self.pairs.iter().enumerate() {
-            buffer.extend(&k.string());
-            buffer.push(ascii::Char::Space);
-            buffer.push(ascii::Char::Colon);
-            buffer.push(ascii::Char::Space);
-            buffer.extend(&v.string());
-
-            if i < self.pairs.len() - 1 {
-                buffer.push(ascii::Char::Comma);
-                buffer.push(ascii::Char::Space);
-            }
-        }
-
-        buffer.push(ascii::Char::RightCurlyBracket);
-
-        buffer
+        write!(f, "{{{}}}", pairs.join(", "))
     }
 }
 
@@ -304,15 +291,15 @@ impl NodeInterface for HashLiteral {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PrefixExpression {
     pub token: Token,
-    pub operator: Vec<ascii::Char>,
+    pub operator: String,
     pub right: Box<Expression>,
 }
 
 impl PrefixExpression {
-    pub fn new(token: Token, operator: &[ascii::Char], right: Expression) -> Self {
+    pub fn new(token: Token, operator: &str, right: Expression) -> Self {
         Self {
             token,
-            operator: operator.to_vec(),
+            operator: operator.to_string(),
             right: Box::new(right),
         }
     }
@@ -320,7 +307,7 @@ impl PrefixExpression {
     pub fn empty() -> Self {
         Self {
             token: Token::empty(),
-            operator: Vec::new(),
+            operator: String::new(),
             right: Box::new(Expression::empty()),
         }
     }
@@ -330,19 +317,14 @@ impl NodeInterface for PrefixExpression {
     fn get_node(&self) -> Node {
         Node::PrefixExpression(self)
     }
-
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
+}
 
-        buffer.push('('.as_ascii().unwrap());
-        buffer.extend(&self.operator);
-        buffer.extend(&self.right.string());
-        buffer.push(')'.as_ascii().unwrap());
-
-        buffer
+impl Display for PrefixExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}{})", self.operator.as_str(), self.right)
     }
 }
 
@@ -350,21 +332,16 @@ impl NodeInterface for PrefixExpression {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InfixExpression {
     pub token: Token,
-    pub operator: Vec<ascii::Char>,
+    pub operator: String,
     pub left: Box<Expression>,
     pub right: Box<Expression>,
 }
 
 impl InfixExpression {
-    pub fn new(
-        token: Token,
-        operator: &[ascii::Char],
-        left: Expression,
-        right: Expression,
-    ) -> Self {
+    pub fn new(token: Token, operator: &str, left: Expression, right: Expression) -> Self {
         Self {
             token,
-            operator: operator.to_vec(),
+            operator: operator.to_string(),
             left: Box::new(left),
             right: Box::new(right),
         }
@@ -375,22 +352,20 @@ impl NodeInterface for InfixExpression {
     fn get_node(&self) -> Node {
         Node::InfixExpression(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        buffer.push('('.as_ascii().unwrap());
-        buffer.extend(self.left.string());
-        buffer.push(' '.as_ascii().unwrap());
-        buffer.extend(&self.operator);
-        buffer.push(' '.as_ascii().unwrap());
-        buffer.extend(self.right.string());
-        buffer.push(')'.as_ascii().unwrap());
-
-        buffer
+impl Display for InfixExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "({} {} {})",
+            self.left,
+            self.operator.as_str(),
+            self.right
+        )
     }
 }
 
@@ -422,24 +397,20 @@ impl NodeInterface for IfExpression {
     fn get_node(&self) -> Node {
         Node::IfExpression(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        buffer.extend("if".as_ascii().unwrap());
-        buffer.extend(self.condition.string());
-        buffer.push(' '.as_ascii().unwrap());
-        buffer.extend(self.consequence.string());
+impl Display for IfExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut result = write!(f, "if ({}) {}", self.condition, self.consequence);
 
         if let Some(alternative) = &self.alternative {
-            buffer.extend("else ".as_ascii().unwrap());
-            buffer.extend(alternative.string());
+            result = write!(f, " else {}", alternative);
         }
 
-        buffer
+        result
     }
 }
 
@@ -465,25 +436,19 @@ impl NodeInterface for FunctionLiteral {
     fn get_node(&self) -> Node {
         Node::FunctionLiteral(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        buffer.extend(self.token_literal());
-        buffer.push('('.as_ascii().unwrap());
-        for (i, param) in self.params.iter().enumerate() {
-            if i != self.params.len() - 1 {
-                buffer.extend(param.string());
-                buffer.push(','.as_ascii().unwrap());
-            }
-        }
-        buffer.push(')'.as_ascii().unwrap());
-        buffer.extend(self.body.string());
-
-        buffer
+impl Display for FunctionLiteral {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let params = self
+            .params
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>();
+        write!(f, "fn ({}) {}", params.join(", "), self.body)
     }
 }
 
@@ -509,25 +474,19 @@ impl NodeInterface for CallExpression {
     fn get_node(&self) -> Node {
         Node::CallExpression(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        buffer.extend(self.func.string());
-        buffer.push('('.as_ascii().unwrap());
-        for (i, arg) in self.args.iter().enumerate() {
-            buffer.extend(arg.string());
-
-            if i != self.args.len() - 1 {
-                buffer.extend(", ".as_ascii().unwrap());
-            }
-        }
-        buffer.push(')'.as_ascii().unwrap());
-
-        buffer
+impl Display for CallExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let args = self
+            .args
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>();
+        write!(f, "{}({})", self.func, args.join(", "))
     }
 }
 
@@ -553,29 +512,21 @@ impl NodeInterface for IndexExpression {
     fn get_node(&self) -> Node {
         Node::IndexExpression(self)
     }
-
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        buffer.push(ascii::Char::LeftParenthesis);
-        buffer.extend(&self.left.string());
-        buffer.push(ascii::Char::LeftSquareBracket);
-        buffer.extend(&self.index.string());
-        buffer.push(ascii::Char::RightSquareBracket);
-        buffer.push(ascii::Char::RightParenthesis);
-
-        buffer
+impl Display for IndexExpression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}[{}])", self.left, self.index)
     }
 }
 
 // BlockStatement
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BlockStatement {
-    pub token: Token, // {
+    pub token: Token,
     pub statements: Vec<Statement>,
 }
 
@@ -592,44 +543,57 @@ impl NodeInterface for BlockStatement {
     fn get_node(&self) -> Node {
         Node::BlockStatement(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-        for stmt in self.statements.iter() {
-            buffer.extend(stmt.string());
-        }
-        buffer
+impl Display for BlockStatement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let statements = self
+            .statements
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>();
+        write!(f, "{{{}}}", statements.join(" "))
     }
 }
 
 // Statement
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Statement {
     Let(LetStatement),
     Return(ReturnStatement),
     Expression(ExpressionStatement),
 }
+
+impl Statement {
+    fn as_interface(&self) -> &dyn NodeInterface {
+        match self {
+            Self::Let(x) => x,
+            Self::Return(x) => x,
+            Self::Expression(x) => x,
+        }
+    }
+}
+
 impl NodeInterface for Statement {
     fn get_node(&self) -> Node {
         Node::Statement(self)
     }
 
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        match self {
-            Self::Let(s) => s.token_literal(),
-            Self::Return(s) => s.token_literal(),
-            Self::Expression(s) => s.token_literal(),
-        }
+    fn get_token(&self) -> Token {
+        self.as_interface().get_token()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
+impl Display for Statement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Let(s) => s.string(),
-            Self::Return(s) => s.string(),
-            Self::Expression(s) => s.string(),
+            Self::Let(x) => write!(f, "{}", x),
+            Self::Return(x) => write!(f, "{}", x),
+            Self::Expression(x) => write!(f, "{}", x),
         }
     }
 }
@@ -640,11 +604,17 @@ pub struct LetStatement {
     pub token: Token,
     pub name: Identifier,
     pub value: Expression,
+    pub has_semicolon: bool,
 }
 
 impl LetStatement {
-    pub fn new(token: Token, name: Identifier, value: Expression) -> Self {
-        Self { token, name, value }
+    pub fn new(token: Token, name: Identifier, value: Expression, has_semicolon: bool) -> Self {
+        Self {
+            token,
+            name,
+            value,
+            has_semicolon,
+        }
     }
 
     pub fn empty() -> Self {
@@ -652,6 +622,7 @@ impl LetStatement {
             token: Token::empty(),
             name: Identifier::empty(),
             value: Expression::empty(),
+            has_semicolon: true,
         }
     }
 }
@@ -660,25 +631,18 @@ impl NodeInterface for LetStatement {
     fn get_node(&self) -> Node {
         Node::LetStatement(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        buffer.extend(self.token_literal());
-        buffer.push(ascii::Char::Space);
-        buffer.extend(self.name.string());
-        buffer.extend([
-            ascii::Char::Space,
-            ascii::Char::EqualsSign,
-            ascii::Char::Space,
-        ]);
-        buffer.extend(self.value.string());
-        buffer.push(ascii::Char::Semicolon);
-
-        buffer
+impl Display for LetStatement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut result = write!(f, "let {} = {}", self.name, self.value);
+        if self.has_semicolon {
+            result = write!(f, ";");
+        }
+        result
     }
 }
 
@@ -687,19 +651,23 @@ impl NodeInterface for LetStatement {
 pub struct ReturnStatement {
     pub token: Token,
     pub value: Expression,
+    pub has_semicolon: bool,
 }
 
 impl ReturnStatement {
-    pub fn new(token: Token, value: Expression) -> Self {
-        Self { token, value }
+    pub fn new(token: Token, value: Expression, has_semicolon: bool) -> Self {
+        Self {
+            token,
+            value,
+            has_semicolon,
+        }
     }
-}
 
-impl ReturnStatement {
     pub fn empty() -> Self {
         Self {
             token: Token::empty(),
             value: Expression::empty(),
+            has_semicolon: true,
         }
     }
 }
@@ -708,19 +676,18 @@ impl NodeInterface for ReturnStatement {
     fn get_node(&self) -> Node {
         Node::ReturnStatement(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        buffer.extend(self.token_literal());
-        buffer.push(ascii::Char::Space);
-        buffer.extend(self.value.string());
-        buffer.push(ascii::Char::Semicolon);
-
-        buffer
+impl Display for ReturnStatement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut result = write!(f, "return {}", self.value);
+        if self.has_semicolon {
+            result = write!(f, ";");
+        }
+        result
     }
 }
 
@@ -729,13 +696,23 @@ impl NodeInterface for ReturnStatement {
 pub struct ExpressionStatement {
     pub token: Token,
     pub value: Expression,
+    pub has_semicolon: bool,
 }
 
 impl ExpressionStatement {
+    pub fn new(token: Token, value: Expression, has_semicolon: bool) -> Self {
+        Self {
+            token,
+            value,
+            has_semicolon,
+        }
+    }
+
     pub fn empty() -> Self {
         Self {
             token: Token::empty(),
             value: Expression::empty(),
+            has_semicolon: true,
         }
     }
 }
@@ -744,12 +721,18 @@ impl NodeInterface for ExpressionStatement {
     fn get_node(&self) -> Node {
         Node::ExpressionStatement(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        self.token.literal.clone()
+    fn get_token(&self) -> Token {
+        self.token.clone()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        self.value.string()
+impl Display for ExpressionStatement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut result = write!(f, "{}", self.value);
+        if self.has_semicolon {
+            result = write!(f, ";");
+        }
+        result
     }
 }
 
@@ -771,21 +754,19 @@ impl NodeInterface for Program {
     fn get_node(&self) -> Node {
         Node::Program(self)
     }
-    fn token_literal(&self) -> Vec<ascii::Char> {
-        match self.statements.first() {
-            Some(stmt) => stmt.token_literal(),
-            None => Vec::new(),
-        }
+    fn get_token(&self) -> Token {
+        self.statements[0].get_token()
     }
+}
 
-    fn string(&self) -> Vec<ascii::Char> {
-        let mut buffer = Vec::new();
-
-        for s in self.statements.iter() {
-            buffer.extend(s.string());
-        }
-
-        buffer
+impl Display for Program {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let statements = self
+            .statements
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>();
+        write!(f, "{}", statements.join(" "))
     }
 }
 
@@ -802,29 +783,30 @@ mod test {
             statements: vec![Statement::Let(LetStatement {
                 token: Token {
                     kind: TokenKind::Let,
-                    literal: "let".as_ascii().unwrap().to_vec(),
+                    literal: "let".to_string(),
                 },
                 name: Identifier {
                     token: Token {
                         kind: TokenKind::Ident,
-                        literal: "myVar".as_ascii().unwrap().to_vec(),
+                        literal: "myVar".to_string(),
                     },
-                    value: "myVar".as_ascii().unwrap().to_vec(),
+                    value: "myVar".to_string(),
                 },
                 value: Expression::Identifier(Identifier {
                     token: Token {
                         kind: TokenKind::Ident,
-                        literal: "anotherVar".as_ascii().unwrap().to_vec(),
+                        literal: "anotherVar".to_string(),
                     },
-                    value: "anotherVar".as_ascii().unwrap().to_vec(),
+                    value: "anotherVar".to_string(),
                 }),
+                has_semicolon: true,
             })],
         };
 
-        if program.string() != "let myVar = anotherVar;".as_ascii().unwrap() {
+        if program.to_string().as_str() != "let myVar = anotherVar;" {
             panic!(
                 "program.string() wrong. expected: \"let myVar = anotherVar;\", got: \"{}\"",
-                program.string().as_str()
+                program.to_string().as_str()
             );
         }
     }

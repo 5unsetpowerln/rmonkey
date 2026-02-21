@@ -27,7 +27,7 @@ pub fn start() {
             .read_line(&mut line)
             .expect("falied to read a line from stdin.");
 
-        let mut lexer = Lexer::new(line.as_ascii().expect("failed to parse an input as ascii"));
+        let mut lexer = Lexer::new(&line);
         let mut parser = Parser::new(&mut lexer);
 
         let program = match parser.parse_program() {

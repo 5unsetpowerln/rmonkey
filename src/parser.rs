@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use anyhow::{Context, Result, anyhow, ensure};
-use indexmap::IndexMap;
+use anyhow::{Context, Result, ensure};
+use thiserror::Error;
 
 use crate::ast::{
     ArrayLiteral, BlockStatement, BoolLiteral, CallExpression, Expression, ExpressionStatement,
@@ -33,8 +33,8 @@ enum OperationPrecedences {
 }
 
 // 演算子と優先順位の対応
-static PRECEDENCES: LazyLock<IndexMap<TokenKind, OperationPrecedences>> = LazyLock::new(|| {
-    let mut map = IndexMap::new();
+static PRECEDENCES: LazyLock<HashMap<TokenKind, OperationPrecedences>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
 
     map.insert(TokenKind::Eq, OperationPrecedences::Equals);
     map.insert(TokenKind::NotEq, OperationPrecedences::Equals);
@@ -50,13 +50,37 @@ static PRECEDENCES: LazyLock<IndexMap<TokenKind, OperationPrecedences>> = LazyLo
     map
 });
 
+// エラー
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("unexpected token: expected: `{expected}`, got: `{got}`")]
+    UnexpectedToken { expected: TokenKind, got: Token },
+
+    #[error("no prefix parse function registered for token `{token}`")]
+    NoPrefixParseFn { token: Token },
+
+    #[error("failed to parse `{raw}` as integer literal")]
+    InvalidIntegerLiteral {
+        raw: String,
+        #[source]
+        source: std::num::ParseIntError,
+    },
+
+    #[error("failed to parse `{raw}` as bool literal")]
+    InvalidBoolLiteral {
+        raw: String,
+        #[source]
+        source: std::str::ParseBoolError,
+    },
+}
+
 // Parser
 pub struct Parser<'a> {
     lexer: &'a mut Lexer,
     current_token: Token, // 現在のトークン
     peek_token: Token,    // 一つ先のトークン
-    prefix_parse_fns: IndexMap<TokenKind, PrefixParseFn<'a>>,
-    infix_parse_fns: IndexMap<TokenKind, InfixParseFn<'a>>,
+    prefix_parse_fns: HashMap<TokenKind, PrefixParseFn<'a>>,
+    infix_parse_fns: HashMap<TokenKind, InfixParseFn<'a>>,
 }
 impl<'a> Parser<'a> {
     pub fn empty(lexer: &'a mut Lexer) -> Self {
@@ -64,8 +88,8 @@ impl<'a> Parser<'a> {
             lexer,
             current_token: Token::empty(),
             peek_token: Token::empty(),
-            prefix_parse_fns: IndexMap::new(),
-            infix_parse_fns: IndexMap::new(),
+            prefix_parse_fns: HashMap::new(),
+            infix_parse_fns: HashMap::new(),
         }
     }
 
@@ -139,43 +163,57 @@ impl<'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> Result<Statement> {
         match self.current_token.kind {
-            TokenKind::Let => Ok(Statement::Let(self.parse_let_statement()?)),
-            TokenKind::Return => Ok(Statement::Return(self.parse_return_statement()?)),
-            _ => Ok(Statement::Expression(self.parse_expression_statement()?)),
+            TokenKind::Let => Ok(Statement::Let(
+                self.parse_let_statement()
+                    .context("failed to parse a let statement.")?,
+            )),
+            TokenKind::Return => Ok(Statement::Return(
+                self.parse_return_statement()
+                    .context("failed to parse a return statement.")?,
+            )),
+            _ => Ok(Statement::Expression(
+                self.parse_expression_statement()
+                    .context("failed to parse an expression statement.")?,
+            )),
         }
     }
 
     fn parse_let_statement(&mut self) -> Result<LetStatement> {
         let token = self.current_token.clone();
 
-        // 次のトークンがIdentifierであることを確認する
-        if !self.peek_token_is(TokenKind::Ident) {
-            return Err(anyhow!("first token is not identifier."));
-        }
+        ensure!(
+            self.peek_token_is(TokenKind::Ident),
+            ParseError::UnexpectedToken {
+                expected: TokenKind::Ident,
+                got: self.peek_token.clone()
+            }
+        );
 
-        // 次のトークンに進める
         self.next_token();
 
-        // name(Identifier)を取得する
         let name = Identifier::new(self.current_token.clone(), &self.current_token.literal);
 
-        // 次のトークンがAssignであることを確認する
-        if !self.peek_token_is(TokenKind::Assign) {
-            return Err(anyhow!("second token is not assign."));
-        }
+        ensure!(
+            self.peek_token_is(TokenKind::Assign),
+            ParseError::UnexpectedToken {
+                expected: TokenKind::Assign,
+                got: self.peek_token.clone()
+            }
+        );
 
         self.next_token();
         self.next_token();
 
         let value = self
             .parse_expression(OperationPrecedences::Lowest)
-            .context("failed to parse expression for value.")?;
+            .context("failed to parse the expression for value.")?;
 
-        if self.peek_token_is(TokenKind::Semicolon) {
+        let has_semicolon = self.peek_token_is(TokenKind::Semicolon);
+        if has_semicolon {
             self.next_token();
         }
 
-        Ok(LetStatement::new(token, name, value))
+        Ok(LetStatement::new(token, name, value, has_semicolon))
     }
 
     fn parse_return_statement(&mut self) -> Result<ReturnStatement> {
@@ -185,59 +223,58 @@ impl<'a> Parser<'a> {
 
         let value = self
             .parse_expression(OperationPrecedences::Lowest)
-            .context("failed to parse expression.")?;
+            .context("failed to parse the return value.")?;
 
-        if self.peek_token_is(TokenKind::Semicolon) {
+        let has_semicolon = self.peek_token_is(TokenKind::Semicolon);
+        if has_semicolon {
             self.next_token();
         }
 
-        Ok(ReturnStatement::new(token, value))
+        Ok(ReturnStatement::new(token, value, has_semicolon))
     }
 
     fn parse_expression_statement(&mut self) -> Result<ExpressionStatement> {
-        let mut expression_stmt = ExpressionStatement::empty();
+        let token = self.current_token.clone();
 
-        expression_stmt.token = self.current_token.clone();
-
-        expression_stmt.value = self
+        let value = self
             .parse_expression(OperationPrecedences::Lowest)
-            .context("failed to parse an expression.")?;
+            .context("failed to parse the expression.")?;
 
-        if self.peek_token_is(TokenKind::Semicolon) {
+        let has_semicolon = self.peek_token_is(TokenKind::Semicolon);
+        if has_semicolon {
             self.next_token();
         }
 
-        Ok(expression_stmt)
+        Ok(ExpressionStatement::new(token, value, has_semicolon))
     }
 
     // parsing function for expressions
     fn parse_expression(&mut self, precedence: OperationPrecedences) -> Result<Expression> {
-        let prefix = if let Some(p) = self.prefix_parse_fns.get(&self.current_token.kind) {
-            p
-        } else {
-            return Err(anyhow!(
-                "no functions associated to token {:?}",
-                self.current_token
-            ));
+        let prefix = match self.prefix_parse_fns.get(&self.current_token.kind) {
+            Some(x) => x,
+            None => {
+                return Err(ParseError::NoPrefixParseFn {
+                    token: self.current_token.clone(),
+                }
+                .into());
+            }
         };
 
-        let mut left_expr = prefix(self).with_context(|| {
-            format!(
-                "failed to parse {:?} with its associated function.",
-                self.current_token
-            )
-        })?;
+        let mut left_expr =
+            prefix(self).with_context(|| format!("failed to parse `{}`", self.current_token))?;
 
         while !self.peek_token_is(TokenKind::Semicolon) && precedence < self.peek_precedence() {
-            let infix = if let Some(&infix) = self.infix_parse_fns.get(&self.peek_token.kind) {
-                infix
-            } else {
-                return Ok(left_expr);
+            let infix = match self.infix_parse_fns.get(&self.peek_token.kind) {
+                Some(x) => *x,
+                None => {
+                    return Ok(left_expr);
+                }
             };
 
             self.next_token();
 
-            left_expr = infix(self, left_expr)?;
+            left_expr = infix(self, left_expr)
+                .with_context(|| format!("failed to parse `{}`", self.current_token))?;
         }
 
         Ok(left_expr)
@@ -252,9 +289,17 @@ impl<'a> Parser<'a> {
 
     fn parse_integer_literal(&mut self) -> Result<Expression> {
         let value_raw = self.current_token.literal.as_str();
-        let value = value_raw
-            .parse::<i64>()
-            .with_context(|| format!("failed to parse {value_raw} as integer."))?;
+
+        let value = match value_raw.parse::<i64>() {
+            Ok(x) => x,
+            Err(err) => {
+                return Err(ParseError::InvalidIntegerLiteral {
+                    raw: value_raw.to_string(),
+                    source: err,
+                }
+                .into());
+            }
+        };
 
         Ok(Expression::IntegerLiteral(IntegerLiteral::new(
             self.current_token.clone(),
@@ -264,9 +309,16 @@ impl<'a> Parser<'a> {
 
     fn parse_bool_literal(&mut self) -> Result<Expression> {
         let value_raw = self.current_token.literal.as_str();
-        let value = value_raw
-            .parse::<bool>()
-            .with_context(|| format!("failed to parse {value_raw} as bool."))?;
+        let value = match value_raw.parse::<bool>() {
+            Ok(x) => x,
+            Err(err) => {
+                return Err(ParseError::InvalidBoolLiteral {
+                    raw: value_raw.to_string(),
+                    source: err,
+                }
+                .into());
+            }
+        };
 
         Ok(Expression::BoolLiteral(BoolLiteral::new(
             self.current_token.clone(),
@@ -286,7 +338,7 @@ impl<'a> Parser<'a> {
 
         let expr_list = self
             .parse_expression_list(TokenKind::RightBracket)
-            .context("failed to parse expression list.")?;
+            .context("failed to parse the expression list.")?;
 
         Ok(Expression::ArrayLiteral(ArrayLiteral::new(
             token, &expr_list,
@@ -315,12 +367,14 @@ impl<'a> Parser<'a> {
         loop {
             let left = self
                 .parse_expression(OperationPrecedences::Lowest)
-                .context("failed to parse an expression in the hash.")?;
+                .context("failed to parse a left expression.")?;
 
             ensure!(
                 self.peek_token_is(TokenKind::Colon),
-                "pair expressions are not separated by comma. got: {:?}",
-                self.peek_token
+                ParseError::UnexpectedToken {
+                    expected: TokenKind::Colon,
+                    got: self.peek_token.clone()
+                }
             );
 
             self.next_token();
@@ -328,7 +382,7 @@ impl<'a> Parser<'a> {
 
             let right = self
                 .parse_expression(OperationPrecedences::Lowest)
-                .context("failed to parse an expression in the hash.")?;
+                .context("failed to parse a right expression.")?;
 
             map.push((left, right));
 
@@ -342,7 +396,10 @@ impl<'a> Parser<'a> {
 
         ensure!(
             self.peek_token_is(TokenKind::RightBrace),
-            "hash is not closed by \"}}\""
+            ParseError::UnexpectedToken {
+                expected: TokenKind::RightBrace,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
@@ -355,11 +412,14 @@ impl<'a> Parser<'a> {
 
         let expr = self
             .parse_expression(OperationPrecedences::Lowest)
-            .context("failed to parse inner expression.")?;
+            .context("failed to parse the expression.")?;
 
         ensure!(
             self.peek_token_is(TokenKind::RightParen),
-            "grouped expression is not closed.",
+            ParseError::UnexpectedToken {
+                expected: TokenKind::RightParen,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
@@ -372,10 +432,10 @@ impl<'a> Parser<'a> {
 
         ensure!(
             self.peek_token_is(TokenKind::LeftParen),
-            format!(
-                "condition for if expression must be start with '('. got: {:?}",
-                self.peek_token
-            )
+            ParseError::UnexpectedToken {
+                expected: TokenKind::LeftParen,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
@@ -383,48 +443,48 @@ impl<'a> Parser<'a> {
 
         let condition = self
             .parse_expression(OperationPrecedences::Lowest)
-            .context("failed to parse expression of condition.")?;
+            .context("failed to parse the condition")?;
 
         ensure!(
             self.peek_token_is(TokenKind::RightParen),
-            format!(
-                "condition for if expressoin must be end with ')'. got: {:?}",
-                self.peek_token
-            )
+            ParseError::UnexpectedToken {
+                expected: TokenKind::RightParen,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
 
         ensure!(
             self.peek_token_is(TokenKind::LeftBrace),
-            format!(
-                "consequence for if expressoin must be start with '{{'. got: {:?}",
-                self.peek_token
-            )
+            ParseError::UnexpectedToken {
+                expected: TokenKind::LeftParen,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
 
-        let conseq = self
+        let consequence = self
             .parse_block_statement()
-            .context("failed to parse consequence.")?;
+            .context("failed to parse the consequence block.")?;
 
         let alternative = if self.peek_token_is(TokenKind::Else) {
             self.next_token();
 
             ensure!(
                 self.peek_token_is(TokenKind::LeftBrace),
-                format!(
-                    "alternative for else must be start with '{{'. got: {:?}",
-                    self.peek_token
-                )
+                ParseError::UnexpectedToken {
+                    expected: TokenKind::LeftBrace,
+                    got: self.peek_token.clone()
+                }
             );
 
             self.next_token();
 
             Some(
                 self.parse_block_statement()
-                    .context("failed to parse alternative.")?,
+                    .context("failed to parse the alternative block.")?,
             )
         } else {
             None
@@ -433,7 +493,7 @@ impl<'a> Parser<'a> {
         Ok(Expression::If(IfExpression::new(
             token,
             condition,
-            conseq,
+            consequence,
             alternative,
         )))
     }
@@ -443,25 +503,31 @@ impl<'a> Parser<'a> {
 
         ensure!(
             self.peek_token_is(TokenKind::LeftParen),
-            "function parameters must start with (."
+            ParseError::UnexpectedToken {
+                expected: TokenKind::LeftParen,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
 
         let params = self
             .parse_function_params()
-            .context("failed to parse params.")?;
+            .context("failed to parse the parameters.")?;
 
         ensure!(
             self.peek_token_is(TokenKind::LeftBrace),
-            "function block must start with {{."
+            ParseError::UnexpectedToken {
+                expected: TokenKind::LeftBrace,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
 
         let block = self
             .parse_block_statement()
-            .context("failed to parse function block.")?;
+            .context("failed to parse the function block.")?;
 
         Ok(Expression::Function(FunctionLiteral::new(
             token, &params, block,
@@ -477,28 +543,28 @@ impl<'a> Parser<'a> {
 
         self.next_token();
 
-        if let Expression::Identifier(ident) = self
-            .parse_identifier()
-            .context("failed to parse an identifier.")?
-        {
-            params.push(ident);
-        }
-
-        while self.peek_token_is(TokenKind::Comma) {
-            self.next_token();
-            self.next_token();
-
+        loop {
             if let Expression::Identifier(ident) = self
                 .parse_identifier()
                 .context("failed to parse an identifier.")?
             {
                 params.push(ident);
             }
+
+            if !self.peek_token_is(TokenKind::Comma) {
+                break;
+            }
+
+            self.next_token();
+            self.next_token();
         }
 
         ensure!(
             self.peek_token_is(TokenKind::RightParen),
-            "function parameters must end with )."
+            ParseError::UnexpectedToken {
+                expected: TokenKind::RightParen,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
@@ -511,7 +577,7 @@ impl<'a> Parser<'a> {
 
         let args = self
             .parse_expression_list(TokenKind::RightParen)
-            .context("failed to parse arguments.")?;
+            .context("failed to parse the arguments.")?;
 
         Ok(Expression::Call(CallExpression::new(token, left, &args)))
     }
@@ -546,7 +612,7 @@ impl<'a> Parser<'a> {
 
         let index = self
             .parse_expression(OperationPrecedences::Lowest)
-            .context("failed to parse expression in index operator.")?;
+            .context("failed to parse the expression.")?;
 
         self.next_token();
 
@@ -563,12 +629,7 @@ impl<'a> Parser<'a> {
 
         let right = self
             .parse_expression(OperationPrecedences::Prefix)
-            .with_context(|| {
-                format!(
-                    "failed to parse an expression which is operand of {} (prefix expression)",
-                    operator.as_str()
-                )
-            })?;
+            .context("failed to parse the right expression")?;
 
         Ok(Expression::Prefix(PrefixExpression::new(
             token, operator, right,
@@ -583,7 +644,7 @@ impl<'a> Parser<'a> {
         self.next_token();
         let right = self
             .parse_expression(precedence)
-            .context("failed to parse right expression.")?;
+            .context("failed to parse the right expression.")?;
 
         Ok(Expression::Infix(InfixExpression::new(
             token, &operator, left, right,
@@ -612,7 +673,7 @@ impl<'a> Parser<'a> {
                 .parse_expression(OperationPrecedences::Lowest)
                 .with_context(|| {
                     format!(
-                        "failed to parse expression {} in expression list.",
+                        "failed to parse the expression at index {}.",
                         expr_list.len()
                     )
                 })?;
@@ -629,9 +690,10 @@ impl<'a> Parser<'a> {
 
         ensure!(
             self.peek_token_is(postfix),
-            "postfix token of the expression list is wrong. got: {:?}, expected: {:?}",
-            self.peek_token.kind,
-            postfix
+            ParseError::UnexpectedToken {
+                expected: postfix,
+                got: self.peek_token.clone()
+            }
         );
 
         self.next_token();
@@ -659,19 +721,6 @@ impl<'a> Parser<'a> {
             .get(&self.current_token.kind)
             .unwrap_or(&OperationPrecedences::Lowest)
     }
-
-    // pub fn print_errors(&self) {
-    //     for err in self.errors.iter() {
-    //         println!("parse error: {err}");
-
-    //         let mut current = err.source();
-
-    //         while let Some(s) = current {
-    //             println!("<- {s}");
-    //             current = s.source();
-    //         }
-    //     }
-    // }
 }
 
 // #[cfg(test)]
@@ -686,7 +735,7 @@ mod test {
 
     enum LiteralForTest {
         Int(i64),
-        Ident(Vec<ascii::Char>),
+        Ident(String),
         Bool(bool),
     }
 
@@ -695,7 +744,7 @@ mod test {
             Self::Int(value)
         }
         fn ident(value: &str) -> Self {
-            Self::Ident(value.as_ascii().unwrap().to_vec())
+            Self::Ident(value.to_string())
         }
 
         fn bool(value: bool) -> Self {
@@ -703,11 +752,13 @@ mod test {
         }
     }
 
-    fn parse_single_statement(input: &[ascii::Char]) -> Result<Statement> {
+    fn parse_single_statement(input: &str) -> Result<Statement> {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
 
-        let program = parser.parse_program().context("failed to parse program")?;
+        let program = parser
+            .parse_program()
+            .context("failed to parse the program")?;
 
         ensure!(
             program.statements.len() == 1,
@@ -720,11 +771,13 @@ mod test {
         Ok(stmt.clone())
     }
 
-    fn parse_single_expression_statement(input: &[ascii::Char]) -> Result<ExpressionStatement> {
+    fn parse_single_expression_statement(input: &str) -> Result<ExpressionStatement> {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
 
-        let program = parser.parse_program().context("failed to parse program")?;
+        let program = parser
+            .parse_program()
+            .context("failed to parse the program")?;
 
         ensure!(
             program.statements.len() == 1,
@@ -739,7 +792,7 @@ mod test {
         } else {
             bail!(anyhow!(
                 "stmt is not ExpressoinStatement. got: {}",
-                stmt.string().as_str()
+                stmt.to_string().as_str()
             ))
         };
 
@@ -749,15 +802,15 @@ mod test {
     #[test]
     fn test_let_statements1() {
         struct Test {
-            input: Vec<ascii::Char>,
-            expected_identifier: Vec<ascii::Char>,
+            input: String,
+            expected_identifier: String,
             expected_value: LiteralForTest,
         }
         impl Test {
             fn new(input: &str, expected_identifier: &str, expected_value: LiteralForTest) -> Self {
                 Self {
-                    input: input.as_ascii().unwrap().to_vec(),
-                    expected_identifier: expected_identifier.as_ascii().unwrap().to_vec(),
+                    input: input.to_string(),
+                    expected_identifier: expected_identifier.to_string(),
                     expected_value,
                 }
             }
@@ -771,7 +824,7 @@ mod test {
 
         for test in tests.iter() {
             let stmt = &parse_single_statement(&test.input).unwrap_or_else(|err| {
-                print_errors("failed to parse single statement", err);
+                print_errors("failed to parse the single statement", err);
                 panic!();
             });
 
@@ -780,18 +833,21 @@ mod test {
             let let_stmt = if let Statement::Let(let_stmt) = stmt {
                 let_stmt
             } else {
-                panic!("stmt is not LetStatement. got: {}", stmt.string().as_str());
+                panic!(
+                    "stmt is not LetStatement. got: {}",
+                    stmt.to_string().as_str()
+                );
             };
 
             test_literal_expression(&let_stmt.value, &test.expected_value);
         }
     }
 
-    fn test_let_statement(stmt: &Statement, name: &[ascii::Char]) {
-        if stmt.token_literal().as_str() != "let" {
+    fn test_let_statement(stmt: &Statement, name: &str) {
+        if stmt.get_token().literal.as_str() != "let" {
             panic!(
                 "stmt.token_literal not 'let'. got: {}",
-                stmt.token_literal().as_str()
+                stmt.get_token().literal.as_str()
             );
         }
 
@@ -804,16 +860,16 @@ mod test {
         if let_stmt.name.value != name {
             panic!(
                 "let_stmt.name.value is not {}. got: {}",
-                name.as_str(),
+                name,
                 let_stmt.name.value.as_str()
             )
         }
 
-        if let_stmt.name.token_literal() != name {
+        if let_stmt.name.get_token().literal != name {
             panic!(
-                "let_stmt.name.token_literal() is not {}. got: {}",
-                name.as_str(),
-                let_stmt.name.token_literal().as_str(),
+                "let_stmt.name.get_token().literal is not {}. got: {}",
+                name,
+                let_stmt.name.get_token().literal.as_str(),
             );
         }
     }
@@ -821,13 +877,13 @@ mod test {
     #[test]
     fn test_return_statements1() {
         struct Test {
-            input: Vec<ascii::Char>,
+            input: String,
             expected_value: LiteralForTest,
         }
         impl Test {
             fn new(input: &str, expected_value: LiteralForTest) -> Self {
                 Self {
-                    input: input.as_ascii().unwrap().to_vec(),
+                    input: input.to_string(),
                     expected_value,
                 }
             }
@@ -841,23 +897,20 @@ mod test {
 
         for test in tests.iter() {
             let stmt = &parse_single_statement(&test.input).unwrap_or_else(|err| {
-                print_errors("failed to parse single statement", err);
+                print_errors("failed to parse the single statement", err);
                 panic!();
             });
 
             let ret_stmt = if let Statement::Return(ret_stmt) = stmt {
                 ret_stmt
             } else {
-                panic!(
-                    "stmt is not ReturnStatement. got: {}",
-                    stmt.string().as_str()
-                );
+                panic!("stmt is not ReturnStatement. got: {}", stmt.to_string());
             };
 
-            if ret_stmt.token_literal().as_str() != "return" {
+            if ret_stmt.get_token().literal.as_str() != "return" {
                 panic!(
-                    "ret_stmt.token_literal() is not 'return'. got: {}",
-                    ret_stmt.token_literal().as_str()
+                    "ret_stmt.get_token().literal is not 'return'. got: {}",
+                    ret_stmt.get_token().literal.as_str()
                 );
             }
 
@@ -867,10 +920,10 @@ mod test {
 
     #[test]
     fn test_identifier_expression() {
-        let input = "foobar;".as_ascii().unwrap();
+        let input = "foobar;";
 
         let expr_stmt = parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse single expression statement", err);
+            print_errors("failed to parse the single expression statement", err);
             panic!()
         });
 
@@ -880,27 +933,27 @@ mod test {
             panic!("Expression is not Identifier. got: {:?}", expr_stmt.value);
         };
 
-        if ident.value != "foobar".as_ascii().unwrap() {
+        if ident.value != "foobar" {
             panic!(
                 "ident.value is not \"foobar\". got: {}",
                 ident.value.as_str()
             );
         }
 
-        if ident.token_literal() != "foobar".as_ascii().unwrap() {
+        if ident.get_token().literal != "foobar" {
             panic!(
-                "ident.token_literal() is not \"foobar\". got: {}",
-                ident.token_literal().as_str()
+                "ident.get_token().literal is not \"foobar\". got: {}",
+                ident.get_token().literal.as_str()
             );
         }
     }
 
     #[test]
     fn test_integer_literal_expression() {
-        let input = "5".as_ascii().unwrap();
+        let input = "5";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -914,10 +967,10 @@ mod test {
             panic!("literal.value is not 5. got: {}", &literal.value);
         }
 
-        if literal.token_literal() != "5".as_ascii().unwrap() {
+        if literal.get_token().literal != "5" {
             panic!(
-                "literal.token_literal() is not \"5\". got: {}",
-                literal.token_literal().as_str()
+                "literal.get_token().literal is not \"5\". got: {}",
+                literal.get_token().literal.as_str()
             );
         }
     }
@@ -925,15 +978,15 @@ mod test {
     #[test]
     fn test_parsing_prefix_expression1() {
         struct Test {
-            input: Vec<ascii::Char>,
-            operator: Vec<ascii::Char>,
+            input: String,
+            operator: String,
             value: LiteralForTest,
         }
         impl Test {
             fn new(input: &str, operator: &str, value: LiteralForTest) -> Self {
                 Self {
-                    input: input.as_ascii().unwrap().to_vec(),
-                    operator: operator.as_ascii().unwrap().to_vec(),
+                    input: input.to_string(),
+                    operator: operator.to_string(),
                     value,
                 }
             }
@@ -950,7 +1003,7 @@ mod test {
 
         for test in tests.iter() {
             let expr_stmt = &parse_single_expression_statement(&test.input).unwrap_or_else(|err| {
-                print_errors("failed to parse expression statement", err);
+                print_errors("failed to parse the expression statement", err);
                 panic!();
             });
 
@@ -978,9 +1031,9 @@ mod test {
     #[test]
     fn test_parsing_infix_expressions1() {
         struct Test {
-            input: Vec<ascii::Char>,
+            input: String,
             left: LiteralForTest,
-            operator: Vec<ascii::Char>,
+            operator: String,
             right: LiteralForTest,
         }
         impl Test {
@@ -991,8 +1044,8 @@ mod test {
                 right: LiteralForTest,
             ) -> Self {
                 Self {
-                    input: input.as_ascii().unwrap().to_vec(),
-                    operator: operator.as_ascii().unwrap().to_vec(),
+                    input: input.to_string(),
+                    operator: operator.to_string(),
                     left,
                     right,
                 }
@@ -1118,7 +1171,7 @@ mod test {
 
         for test in tests.iter() {
             let expr_stmt = &parse_single_expression_statement(&test.input).unwrap_or_else(|err| {
-                print_errors("failed to parse expression statement", err);
+                print_errors("failed to parse the expression statement", err);
                 panic!();
             });
 
@@ -1129,14 +1182,14 @@ mod test {
     #[test]
     fn test_operator_precedence_parsing() {
         struct Test {
-            input: Vec<ascii::Char>,
-            expected: Vec<ascii::Char>,
+            input: String,
+            expected: String,
         }
         impl Test {
             fn new(input: &str, expected: &str) -> Self {
                 Self {
-                    input: input.as_ascii().unwrap().to_vec(),
-                    expected: expected.as_ascii().unwrap().to_vec(),
+                    input: input.to_string(),
+                    expected: expected.to_string(),
                 }
             }
         }
@@ -1150,7 +1203,7 @@ mod test {
             Test::new("a * b / c", "((a * b) / c)"),
             Test::new("a + b / c", "(a + (b / c))"),
             Test::new("a + b * c + d / e - f", "(((a + (b * c)) + (d / e)) - f)"),
-            Test::new("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"),
+            Test::new("3 + 4; -5 * 5", "(3 + 4); ((-5) * 5)"),
             Test::new("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
             Test::new("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
             Test::new(
@@ -1206,13 +1259,10 @@ mod test {
                 }
             };
 
-            let actual = program.string();
+            let actual = program.to_string();
             if actual != test.expected {
-                panic!(
-                    "expected: {}, got: {}",
-                    test.expected.as_str(),
-                    actual.as_str()
-                );
+                println!("{}", test.expected == actual);
+                panic!("expected: {:?}, got: {:?}", test.expected, actual);
             }
         }
     }
@@ -1220,13 +1270,13 @@ mod test {
     #[test]
     fn test_boolean_expression() {
         struct Test {
-            input: Vec<ascii::Char>,
+            input: String,
             expected_boolean: bool,
         }
         impl Test {
             fn new(input: &str, expected_boolean: bool) -> Self {
                 Self {
-                    input: input.as_ascii().unwrap().to_vec(),
+                    input: input.to_string(),
                     expected_boolean,
                 }
             }
@@ -1236,7 +1286,7 @@ mod test {
 
         for test in tests.iter() {
             let expr_stmt = &parse_single_expression_statement(&test.input).unwrap_or_else(|err| {
-                print_errors("failed to parse expression statement", err);
+                print_errors("failed to parse the expression statement", err);
                 panic!();
             });
 
@@ -1245,7 +1295,7 @@ mod test {
             } else {
                 panic!(
                     "expr_stmt.value is not Boolean. got: {}",
-                    expr_stmt.value.string().as_str()
+                    expr_stmt.value.to_string().as_str()
                 );
             };
 
@@ -1260,10 +1310,10 @@ mod test {
 
     #[test]
     fn test_if_expression() {
-        let input = "if (x < y) {x}".as_ascii().unwrap();
+        let input = "if (x < y) {x}";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1272,14 +1322,14 @@ mod test {
         } else {
             panic!(
                 "expr_stmt.value is not IfExpression. got: {}",
-                expr_stmt.value.string().as_str()
+                expr_stmt.value.to_string()
             );
         };
 
         test_infix_expression(
             &if_expr.condition,
             &LiteralForTest::ident("x"),
-            "<".as_ascii().unwrap(),
+            "<",
             &LiteralForTest::ident("y"),
         );
 
@@ -1300,7 +1350,7 @@ mod test {
                 );
             };
 
-        test_identifier(&expr_stmt_in_conseq.value, "x".as_ascii().unwrap());
+        test_identifier(&expr_stmt_in_conseq.value, "x");
 
         if if_expr.alternative.is_some() {
             panic!("if_expr.alternative is not None.");
@@ -1309,10 +1359,10 @@ mod test {
 
     #[test]
     fn test_if_else_expression() {
-        let input = "if (x < y) {x} else {y}".as_ascii().unwrap();
+        let input = "if (x < y) {x} else {y}";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1321,14 +1371,14 @@ mod test {
         } else {
             panic!(
                 "expr_stmt.value is not IfExpression. got: {}",
-                expr_stmt.value.string().as_str()
+                expr_stmt.value.to_string()
             );
         };
 
         test_infix_expression(
             &if_expr.condition,
             &LiteralForTest::ident("x"),
-            "<".as_ascii().unwrap(),
+            "<",
             &LiteralForTest::ident("y"),
         );
 
@@ -1349,7 +1399,7 @@ mod test {
                 );
             };
 
-        test_identifier(&expr_stmt_in_conseq.value, "x".as_ascii().unwrap());
+        test_identifier(&expr_stmt_in_conseq.value, "x");
 
         let alternative = if let Some(a) = &if_expr.alternative {
             a
@@ -1374,15 +1424,15 @@ mod test {
             );
         };
 
-        test_identifier(&expr_stmt_in_alt.value, "y".as_ascii().unwrap());
+        test_identifier(&expr_stmt_in_alt.value, "y");
     }
 
     #[test]
     fn test_function_literal_parsing() {
-        let input = "fn(x, y) { x + y; }".as_ascii().unwrap();
+        let input = "fn(x, y) { x + y; }";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1429,17 +1479,17 @@ mod test {
         test_infix_expression(
             body_expr,
             &LiteralForTest::ident("x"),
-            "+".as_ascii().unwrap(),
+            "+",
             &LiteralForTest::ident("y"),
         );
     }
 
     #[test]
     fn test_string_literal_expression() {
-        let input = "\"hello world\";".as_ascii().unwrap();
+        let input = "\"hello world\";";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1462,10 +1512,10 @@ mod test {
 
     #[test]
     fn test_call_expression_parsing() {
-        let input = "add(1, 2 * 3, 4 + 5);".as_ascii().unwrap();
+        let input = "add(1, 2 * 3, 4 + 5);";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1475,7 +1525,7 @@ mod test {
             panic!("expr_stmt.value is not CallExpression");
         };
 
-        test_identifier(&call_expr.func, "add".as_ascii().unwrap());
+        test_identifier(&call_expr.func, "add");
 
         if call_expr.args.len() != 3 {
             panic!("wrong length of args. got: {}", call_expr.args.len());
@@ -1485,23 +1535,23 @@ mod test {
         test_infix_expression(
             &call_expr.args[1],
             &LiteralForTest::int(2),
-            "*".as_ascii().unwrap(),
+            "*",
             &LiteralForTest::int(3),
         );
         test_infix_expression(
             &call_expr.args[2],
             &LiteralForTest::int(4),
-            "+".as_ascii().unwrap(),
+            "+",
             &LiteralForTest::int(5),
         );
     }
 
     #[test]
     fn test_parsing_array_literals() {
-        let input = "[1, 2 * 2, 3 + 3]".as_ascii().unwrap();
+        let input = "[1, 2 * 2, 3 + 3]";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1522,23 +1572,23 @@ mod test {
         test_infix_expression(
             &array_literal.elements[1],
             &LiteralForTest::int(2),
-            "*".as_ascii().unwrap(),
+            "*",
             &LiteralForTest::int(2),
         );
         test_infix_expression(
             &array_literal.elements[2],
             &LiteralForTest::int(3),
-            "+".as_ascii().unwrap(),
+            "+",
             &LiteralForTest::int(3),
         );
     }
 
     #[test]
     fn test_parsing_index_expressions() {
-        let input = "myArray[1 + 1]".as_ascii().unwrap();
+        let input = "myArray[1 + 1]";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1548,23 +1598,23 @@ mod test {
             panic!("expr_stmt.value is not IndexExpression");
         };
 
-        test_identifier(&idx_expr.left, "myArray".as_ascii().unwrap());
+        test_identifier(&idx_expr.left, "myArray");
 
         test_infix_expression(
             &idx_expr.index,
             &LiteralForTest::int(1),
-            "+".as_ascii().unwrap(),
+            "+",
             &LiteralForTest::int(1),
         );
     }
 
     #[test]
     fn test_parsing_hash_literals_string_keys() {
-        let input = "{\"one\": 1, \"two\": 2, \"three\": 3}".as_ascii().unwrap();
+        let input = "{\"one\": 1, \"two\": 2, \"three\": 3}";
         let expected = vec![("one", 1), ("two", 2), ("three", 3)];
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1594,10 +1644,10 @@ mod test {
 
     #[test]
     fn test_parsing_empty_hash_literal() {
-        let input = "{}".as_ascii().unwrap();
+        let input = "{}";
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1618,39 +1668,22 @@ mod test {
 
     #[test]
     fn test_parsing_hash_literals_with_expressions() {
-        let input = "{\"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5}"
-            .as_ascii()
-            .unwrap();
+        let input = "{\"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5}";
 
         let expected: Vec<(&str, fn(&Expression))> = vec![
             ("one", |expr: &Expression| {
-                test_infix_expression(
-                    expr,
-                    &LiteralForTest::int(0),
-                    "+".as_ascii().unwrap(),
-                    &LiteralForTest::int(1),
-                );
+                test_infix_expression(expr, &LiteralForTest::int(0), "+", &LiteralForTest::int(1));
             }),
             ("two", |expr: &Expression| {
-                test_infix_expression(
-                    expr,
-                    &LiteralForTest::int(10),
-                    "-".as_ascii().unwrap(),
-                    &LiteralForTest::int(8),
-                );
+                test_infix_expression(expr, &LiteralForTest::int(10), "-", &LiteralForTest::int(8));
             }),
             ("three", |expr: &Expression| {
-                test_infix_expression(
-                    expr,
-                    &LiteralForTest::int(15),
-                    "/".as_ascii().unwrap(),
-                    &LiteralForTest::int(5),
-                );
+                test_infix_expression(expr, &LiteralForTest::int(15), "/", &LiteralForTest::int(5));
             }),
         ];
 
         let expr_stmt = &parse_single_expression_statement(input).unwrap_or_else(|err| {
-            print_errors("failed to parse expression statement", err);
+            print_errors("failed to parse the expression statement", err);
             panic!();
         });
 
@@ -1680,7 +1713,7 @@ mod test {
     fn test_infix_expression(
         expr: &Expression,
         left: &LiteralForTest,
-        operator: &[ascii::Char],
+        operator: &str,
         right: &LiteralForTest,
     ) {
         let infix_expr = if let Expression::Infix(infix_expr) = expr {
@@ -1694,7 +1727,7 @@ mod test {
         if infix_expr.operator != operator {
             panic!(
                 "infix_expr.operator is not {}. got: {}",
-                operator.as_str(),
+                operator,
                 infix_expr.operator.as_str()
             );
         }
@@ -1741,11 +1774,11 @@ mod test {
             );
         }
 
-        if integer_literal.token_literal().as_str() != format!("{value}").as_str() {
+        if integer_literal.get_token().literal.as_str() != format!("{value}").as_str() {
             panic!(
-                "integer_literal.token_literal() is not \"{}\". got: \"{}\"",
+                "integer_literal.get_token().literal is not \"{}\". got: \"{}\"",
                 value,
-                integer_literal.token_literal().as_str()
+                integer_literal.get_token().literal.as_str()
             );
         }
     }
@@ -1754,18 +1787,18 @@ mod test {
         let bool_expr = if let Expression::BoolLiteral(bool_expr) = expr {
             bool_expr
         } else {
-            panic!("expr is not Boolean. got: {}", expr.string().as_str());
+            panic!("expr is not Boolean. got: {}", expr);
         };
 
         if bool_expr.value != value {
             panic!("bool_expr.value is not {}. got: {}", value, bool_expr.value);
         }
 
-        if bool_expr.token_literal().as_str() != value.to_string().as_str() {
+        if bool_expr.get_token().literal.as_str() != value.to_string().as_str() {
             panic!(
-                "bool_expr.token_literal() is not {}. got: {}",
+                "bool_expr.get_token().literal is not {}. got: {}",
                 value,
-                bool_expr.token_literal().as_str()
+                bool_expr.get_token().literal.as_str()
             );
         }
     }
@@ -1774,7 +1807,7 @@ mod test {
     // その識別子が与えた文字列と等しいこと、
     // その識別子のトークンリテラルが与えた文字列と等しいことをテストする
     // テストに成功したらリターンし、失敗したらpanicする
-    fn test_identifier(expr: &Expression, value: &[ascii::Char]) {
+    fn test_identifier(expr: &Expression, value: &str) {
         let ident = if let Expression::Identifier(ident) = expr {
             ident
         } else {
@@ -1784,16 +1817,16 @@ mod test {
         if ident.value != value {
             panic!(
                 "ident value is not {}. got: {}",
-                value.as_str(),
+                value,
                 ident.value.as_str()
             );
         }
 
-        if ident.token_literal() != value {
+        if ident.get_token().literal != value {
             panic!(
-                "ident.token_literal() is not {}. got: {}",
-                value.as_str(),
-                ident.token_literal().as_str()
+                "ident.get_token().literal is not {}. got: {}",
+                value,
+                ident.get_token().literal.as_str()
             );
         }
     }

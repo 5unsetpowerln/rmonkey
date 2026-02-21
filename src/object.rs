@@ -7,9 +7,12 @@ use std::rc::Rc;
 
 use anyhow::{Result, anyhow, bail, ensure};
 
-use crate::ast::{self, ArrayLiteral, BoolLiteral, FunctionLiteral, NodeInterface};
+use crate::ast::{self, FunctionLiteral};
+use crate::eval::EvalError;
 
-pub trait ObjectInterface: Display {}
+pub trait ObjectInterface: Display {
+    fn get_name(&self) -> String;
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Object {
@@ -51,7 +54,7 @@ impl Object {
         Self::Null(Rc::new(RefCell::new(Null::new())))
     }
 
-    pub fn str(value: &[ascii::Char]) -> Self {
+    pub fn str(value: &str) -> Self {
         Self::String(Rc::new(RefCell::new(StringObject::new(value))))
     }
 
@@ -76,6 +79,12 @@ impl Object {
     }
 }
 
+impl ObjectInterface for Object {
+    fn get_name(&self) -> String {
+        self.as_interface().borrow().get_name()
+    }
+}
+
 impl Display for Object {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_interface().borrow())
@@ -94,7 +103,11 @@ impl IntegerObject {
     }
 }
 
-impl ObjectInterface for IntegerObject {}
+impl ObjectInterface for IntegerObject {
+    fn get_name(&self) -> String {
+        "int".to_string()
+    }
+}
 
 impl Display for IntegerObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -114,7 +127,11 @@ impl BoolObject {
     }
 }
 
-impl ObjectInterface for BoolObject {}
+impl ObjectInterface for BoolObject {
+    fn get_name(&self) -> String {
+        "bool".to_string()
+    }
+}
 
 impl Display for BoolObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -138,18 +155,22 @@ impl Display for Null {
     }
 }
 
-impl ObjectInterface for Null {}
+impl ObjectInterface for Null {
+    fn get_name(&self) -> String {
+        "null".to_string()
+    }
+}
 
 // String
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StringObject {
-    pub value: Vec<ascii::Char>,
+    pub value: String,
 }
 
 impl StringObject {
-    pub fn new(value: &[ascii::Char]) -> Self {
+    pub fn new(value: &str) -> Self {
         Self {
-            value: value.to_vec(),
+            value: value.to_string(),
         }
     }
 }
@@ -160,7 +181,11 @@ impl Display for StringObject {
     }
 }
 
-impl ObjectInterface for StringObject {}
+impl ObjectInterface for StringObject {
+    fn get_name(&self) -> String {
+        "string".to_string()
+    }
+}
 
 // ReturnValue
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,7 +199,11 @@ impl ReturnValue {
     }
 }
 
-impl ObjectInterface for ReturnValue {}
+impl ObjectInterface for ReturnValue {
+    fn get_name(&self) -> String {
+        "return value".to_string()
+    }
+}
 
 impl Display for ReturnValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -219,7 +248,11 @@ impl Function {
     }
 }
 
-impl ObjectInterface for Function {}
+impl ObjectInterface for Function {
+    fn get_name(&self) -> String {
+        "function".to_string()
+    }
+}
 
 impl Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -236,7 +269,7 @@ impl Display for Function {
         }
 
         buffer.push_str(") {\n");
-        buffer.push_str(self.body.string().as_str());
+        buffer.push_str(self.body.to_string().as_str());
         buffer.push_str("\n}");
 
         write!(f, "{buffer}")
@@ -257,7 +290,11 @@ impl Array {
     }
 }
 
-impl ObjectInterface for Array {}
+impl ObjectInterface for Array {
+    fn get_name(&self) -> String {
+        "array".to_string()
+    }
+}
 
 impl Display for Array {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -295,7 +332,9 @@ impl HashKeyObject {
             Object::Integer(x) => Self::Integer(x.clone()),
             Object::Bool(x) => Self::Bool(x.clone()),
             _ => {
-                bail!(anyhow!("{:?} can't be key of hash.", object))
+                bail!(EvalError::NotHashable {
+                    got: object.get_name()
+                })
             }
         };
 
@@ -303,9 +342,7 @@ impl HashKeyObject {
     }
 
     pub fn str(value: &str) -> Self {
-        Self::String(Rc::new(RefCell::new(StringObject::new(
-            value.as_ascii().unwrap(),
-        ))))
+        Self::String(Rc::new(RefCell::new(StringObject::new(value))))
     }
 
     pub fn int(value: i64) -> Self {
@@ -370,7 +407,11 @@ impl Display for HashObject {
     }
 }
 
-impl ObjectInterface for HashObject {}
+impl ObjectInterface for HashObject {
+    fn get_name(&self) -> String {
+        "hash".to_string()
+    }
+}
 
 // Builtin
 pub type BuiltinFunction = fn(&[Rc<Object>]) -> Result<Rc<Object>>;
@@ -392,7 +433,11 @@ impl Display for Builtin {
     }
 }
 
-impl ObjectInterface for Builtin {}
+impl ObjectInterface for Builtin {
+    fn get_name(&self) -> String {
+        "builtin".to_string()
+    }
+}
 
 // helper constants
 pub fn create_true() -> Rc<Object> {
