@@ -22,6 +22,7 @@ use clap::Parser;
 use self::eval::eval;
 use self::lexer::Lexer;
 use self::object::Environment;
+use self::utils::print_errors;
 
 #[derive(clap::Parser, Debug)]
 struct Args {
@@ -51,11 +52,15 @@ fn main() {
 
             let mut lexer = Lexer::new(&input);
             let mut parser = parser::Parser::new(&mut lexer);
-            let program = parser
-                .parse_program()
-                .expect("failed to parse the program.");
+            let program = parser.parse_program().unwrap_or_else(|err| {
+                print_errors("failed to parse the program", err);
+                panic!();
+            });
             let environment = Rc::new(RefCell::new(Environment::new(None)));
-            let evaluated = eval(&program, environment).expect("failed to eval the program.");
+            let evaluated = eval(&program, environment).unwrap_or_else(|err| {
+                print_errors("failed to eval the program", err);
+                panic!();
+            });
             if let Some(value) = evaluated {
                 println!("{}", value.as_ref());
             }
