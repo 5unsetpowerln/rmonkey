@@ -1,4 +1,3 @@
-use core::ascii;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::discriminant;
@@ -1039,6 +1038,28 @@ mod test {
         test_integer_object(&array.borrow().array[0], 1);
         test_integer_object(&array.borrow().array[1], 4);
         test_integer_object(&array.borrow().array[2], 6);
+    }
+
+    #[test]
+    fn test_empty_array_literal() {
+        let input = "[]";
+
+        let evaluated = &*test_eval(input).unwrap_or_else(|| {
+            panic!("no value is produced.");
+        });
+
+        let array = if let Object::Array(array) = evaluated {
+            array
+        } else {
+            panic!("the object is not Array. got: {evaluated:?}",);
+        };
+
+        if array.borrow().array.len() != 0 {
+            panic!(
+                "the length of array is not 0. got: {}",
+                array.borrow().array.len()
+            );
+        }
     }
 
     #[test]

@@ -663,6 +663,7 @@ impl<'a> Parser<'a> {
         let mut expr_list = Vec::new();
 
         if self.peek_token_is(postfix) {
+            self.next_token();
             return Ok(expr_list);
         }
 

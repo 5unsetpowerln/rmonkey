@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
+clap = { version = "4.5.60", features = ["derive"] }
 log = "0.4.29"
 thiserror = "2.0.18"
 

@@ -11,6 +11,9 @@ use crate::utils::print_errors;
 const PROMPT: &str = ">> ";
 
 pub fn start() {
+    println!("Hello. This is the rMonkey programming language!");
+    println!("Feel free to type in commands");
+
     let stdin_ = stdin();
     let mut stdout_ = stdout();
 
