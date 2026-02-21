@@ -49,6 +49,7 @@ pub enum Expression {
     ArrayLiteral(ArrayLiteral),
     IndexExpression(IndexExpression),
     HashLiteral(HashLiteral),
+    BlockStatement(BlockStatement),
 }
 
 impl Expression {
@@ -70,6 +71,7 @@ impl Expression {
             Self::ArrayLiteral(x) => x,
             Self::IndexExpression(x) => x,
             Self::HashLiteral(x) => x,
+            Self::BlockStatement(x) => x,
         }
     }
 }

@@ -9,7 +9,7 @@ pub fn print_errors(msg: &str, err: Error) {
     let mut current = err.source();
 
     while let Some(s) = current {
-        println!("<- {s}");
+        println!("\t<- {s}");
         current = s.source();
     }
 }

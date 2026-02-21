@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::io::{Write, stdin, stdout};
 use std::rc::Rc;
 
-use crate::ast::NodeInterface;
 use crate::eval::eval;
 use crate::lexer::Lexer;
 use crate::object::Environment;
@@ -46,6 +45,8 @@ pub fn start() {
             }
         };
 
-        println!("{evaluated}");
+        if let Some(value) = evaluated {
+            println!("{}", value)
+        }
     }
 }
