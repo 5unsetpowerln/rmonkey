@@ -414,7 +414,7 @@ impl ObjectInterface for HashObject {
 }
 
 // Builtin
-pub type BuiltinFunction = fn(&[Rc<Object>]) -> Result<Rc<Object>>;
+pub type BuiltinFunction = fn(&[Rc<Object>]) -> Result<Option<Rc<Object>>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Builtin {

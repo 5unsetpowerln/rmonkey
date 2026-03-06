@@ -206,9 +206,7 @@ fn __eval<T: ast::NodeInterface>(
             let args =
                 eval_expressions(&call_expr.args, env).context("failed to eval the arguments.")?;
 
-            Ok(Some(
-                apply_function(func, &args).context("failed to eval the function.")?,
-            ))
+            apply_function(func, &args).context("failed to eval the function.")
         }
         //// index reference
         Node::IndexExpression(idx_expr) => {
@@ -546,7 +544,7 @@ fn eval_expressions(
 }
 
 // related to function
-fn apply_function(f: Rc<Object>, args: &[Rc<Object>]) -> Result<Rc<Object>> {
+fn apply_function(f: Rc<Object>, args: &[Rc<Object>]) -> Result<Option<Rc<Object>>> {
     match &*f {
         Object::Function(func) => {
             let func_env = func
@@ -555,14 +553,9 @@ fn apply_function(f: Rc<Object>, args: &[Rc<Object>]) -> Result<Rc<Object>> {
                 .context("failed to create the environment.")?;
 
             let evaluated =
-                match __eval(&func.borrow().body, func_env).context("failed to eval the body.")? {
-                    Some(x) => x,
-                    None => bail!(EvalError::NotProducedValue {
-                        expr: Expression::BlockStatement(func.borrow().body.clone())
-                    }),
-                };
+                __eval(&func.borrow().body, func_env).context("failed to eval the body.")?;
 
-            Ok(unwrap_return_value(evaluated))
+            Ok(evaluated.map(unwrap_return_value))
         }
         Object::Builtin(builtin) => {
             (builtin.borrow().func)(args).context("failed to run a builtin function.")
