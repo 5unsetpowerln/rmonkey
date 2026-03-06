@@ -585,7 +585,8 @@ mod test {
 
     use anyhow::{Result, bail};
 
-    use crate::ast::NodeInterface;
+    use crate::ast::{self, NodeInterface};
+    use crate::eval::EvalError;
     use crate::lexer::Lexer;
     use crate::object::{self, Environment, HashKeyObject, Object};
     use crate::parser::Parser;
@@ -1219,6 +1220,123 @@ mod test {
         }
     }
 
+    #[test]
+    fn test_error_handling() {
+        struct Test {
+            input: String,
+            expected: EvalError,
+        }
+
+        let tests: Vec<Test> = vec![
+            Test {
+                input: "5 + true;".to_string(),
+                expected: EvalError::OperationTypeMismatch {
+                    operator: "+".to_string(),
+                    left: "INTEGER".to_string(),
+                    right: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: "5 + true; 5;".to_string(),
+                expected: EvalError::OperationTypeMismatch {
+                    operator: "+".to_string(),
+                    left: "INTEGER".to_string(),
+                    right: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: "-true".to_string(),
+                expected: EvalError::UnknownOperator {
+                    operator: "-".to_string(),
+                    operand_type: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: "true + false;".to_string(),
+                expected: EvalError::UnknownOperator {
+                    operator: "+".to_string(),
+                    operand_type: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: "true + false + true + false;".to_string(),
+                expected: EvalError::UnknownOperator {
+                    operator: "+".to_string(),
+                    operand_type: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: "5; true + false; 5".to_string(),
+                expected: EvalError::UnknownOperator {
+                    operator: "+".to_string(),
+                    operand_type: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: r#""Hello" - "World""#.to_string(),
+                expected: EvalError::UnknownOperator {
+                    operator: "-".to_string(),
+                    operand_type: "STRING".to_string(),
+                },
+            },
+            Test {
+                input: "if (10 > 1) { true + false; }".to_string(),
+                expected: EvalError::UnknownOperator {
+                    operator: "+".to_string(),
+                    operand_type: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: r#"
+        if (10 > 1) {
+          if (10 > 1) {
+            return true + false;
+          }
+          return 1;
+        }
+        "#
+                .to_string(),
+                expected: EvalError::UnknownOperator {
+                    operator: "+".to_string(),
+                    operand_type: "BOOLEAN".to_string(),
+                },
+            },
+            Test {
+                input: "foobar".to_string(),
+                expected: EvalError::IdentifierNotFound {
+                    ident: ast::Identifier::from_str("foobar"),
+                },
+            },
+            Test {
+                input: r#"{"name": "Monkey"}[fn(x) { x }];"#.to_string(),
+                expected: EvalError::NotHashable {
+                    got: "FUNCTION".to_string(),
+                },
+            },
+            Test {
+                input: "999[1]".to_string(),
+                expected: EvalError::UnsupportedIndexOperation {
+                    left: "INTEGER".to_string(),
+                    index: "1".to_string(),
+                },
+            },
+        ];
+
+        for (i, test) in tests.iter().enumerate() {
+            let evaluated = test_eval_with_error(test.input.as_str());
+
+            match evaluated {
+                Ok(obj) => {
+                    panic!(
+                        "no error returned. expected: {}, got: {:?}",
+                        test.expected, obj
+                    );
+                }
+                Err(err) => {}
+            }
+        }
+    }
+
     fn test_eval(input: &str) -> Option<Rc<object::Object>> {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
@@ -1236,6 +1354,22 @@ mod test {
             print_errors("failed to evaluate", e);
             panic!()
         })
+    }
+
+    fn test_eval_with_error(input: &str) -> Result<Option<Rc<object::Object>>> {
+        let mut lexer = Lexer::new(input);
+        let mut parser = Parser::new(&mut lexer);
+        let program = match parser.parse_program() {
+            Ok(p) => p,
+            Err(err) => {
+                print_errors("failed to parse the program", err);
+                panic!();
+            }
+        };
+
+        let env = Rc::new(RefCell::new(Environment::new(None)));
+
+        eval(&program, env)
     }
 
     fn test_integer_object(obj: &Object, expected: i64) -> Result<()> {

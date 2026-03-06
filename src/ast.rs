@@ -2,7 +2,7 @@ use core::ascii;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
-use crate::token::Token;
+use crate::token::{Token, TokenKind};
 
 // Node
 pub enum Node<'a> {
@@ -110,6 +110,13 @@ impl Identifier {
         Self {
             token: Token::empty(),
             value: String::new(),
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        Self {
+            token: Token::new(TokenKind::Ident, s),
+            value: s.to_string(),
         }
     }
 }
