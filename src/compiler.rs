@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::code::Instructions;
 use crate::{ast, object};
@@ -17,7 +17,52 @@ impl Compiler {
         }
     }
 
+    // fn add_instruction()
+
+    // fn emit()
+
+    // fn add_constant(&mut self, )
+
     pub fn compile<T: ast::NodeInterface>(&mut self, node: &T) -> Result<()> {
+        match node.get_node() {
+            ast::Node::Program(program) => {
+                for stmt in program.statements.iter() {
+                    self.compile(stmt).context("failed to parse a statement.")?;
+                }
+            }
+
+            ast::Node::Statement(stmt) => match stmt {
+                ast::Statement::Expression(expr_stmt) => self
+                    .compile(expr_stmt)
+                    .context("failed to compile the expression statement.")?,
+                ast::Statement::Let(let_stmt) => self
+                    .compile(let_stmt)
+                    .context("failed to compile the let statement.")?,
+                ast::Statement::Return(ret_stmt) => self
+                    .compile(ret_stmt)
+                    .context("failed to compile the return statement.")?,
+            },
+
+            ast::Node::ExpressionStatement(expr_stmt) => self
+                .compile(&expr_stmt.value)
+                .context("failed to compile the expression.")?,
+
+            ast::Node::InfixExpression(infix_expr) => {
+                self.compile(infix_expr.left.as_ref())
+                    .context("failed to compile the left expression.")?;
+                self.compile(infix_expr.right.as_ref())
+                    .context("failed to compile the right expression.")?;
+            }
+
+            ast::Node::IntegerLiteral(int_literal) => {
+                let int_obj = object::Object::int(int_literal.value);
+
+                todo!()
+            }
+
+            _ => unimplemented!(),
+        }
+
         todo!()
     }
 
@@ -42,20 +87,17 @@ impl ByteCode {
 }
 
 mod test {
-    use std::mem::discriminant;
     use std::rc::Rc;
 
     use anyhow::{Context, Result, bail};
 
     use crate::ast::Program;
-    use crate::code::{OpCode, create_inst};
+    use crate::code::{Instruction, Instructions, OpCodeKind};
     use crate::compiler::Compiler;
     use crate::lexer::Lexer;
     use crate::object::Object;
     use crate::parser::Parser;
-    use crate::utils::{concatenate_insts_list, print_errors};
-
-    use super::Instructions;
+    use crate::utils::print_errors;
 
     struct CompilerTestCase {
         input: String,
@@ -69,7 +111,7 @@ mod test {
             expected_constants: &[Object],
             expected_instructions: &[Instructions],
         ) -> Self {
-            let expected_instructions = Instructions::from_list(expected_instructions);
+            let expected_instructions = Instructions::merge(expected_instructions);
 
             Self {
                 input: input.to_string(),
@@ -79,14 +121,22 @@ mod test {
         }
     }
 
+    /// Instruction から Instructions を作るヘルパー
+    fn make_insts(kind: OpCodeKind, operands: &[u64]) -> Instructions {
+        let inst = Instruction::new(kind, operands).unwrap();
+        let mut insts = Instructions::new();
+        insts.add_inst(&inst);
+        insts
+    }
+
     #[test]
     fn test_integer_arithmetic() {
         let tests = [CompilerTestCase::new(
             "1 + 2",
             &[Object::int(1), Object::int(2)],
             &[
-                create_inst(OpCode::Constant, &[0]).unwrap(),
-                create_inst(OpCode::Constant, &[1]).unwrap(),
+                make_insts(OpCodeKind::Constant, &[0]),
+                make_insts(OpCodeKind::Constant, &[1]),
             ],
         )];
 
@@ -116,7 +166,7 @@ mod test {
 
             test_insts(&test.expected_instructions, &bytecode.instructions).unwrap_or_else(|err| {
                 print_errors(
-                    format!("test {} failed. failed to test instructions.", i).as_str(),
+                    &format!("test {} failed. failed to test instructions.", i),
                     err,
                 );
                 panic!();
@@ -124,7 +174,7 @@ mod test {
 
             test_consts(&test.expected_constants, &bytecode.constants).unwrap_or_else(|err| {
                 print_errors(
-                    format!("test {} failed. failed to test constants.", i).as_str(),
+                    &format!("test {} failed. failed to test constants.", i),
                     err,
                 );
                 panic!();
@@ -138,22 +188,24 @@ mod test {
         parser.parse_program()
     }
 
-    fn test_insts(expected_insts: &Instructions, actual_insts: &Instructions) -> Result<()> {
-        if expected_insts.len() != actual_insts.len() {
+    fn test_insts(expected: &Instructions, actual: &Instructions) -> Result<()> {
+        if expected.len() != actual.len() {
             bail!(
-                "wrong instructions length. expected: {}, got: {}.",
-                expected_insts.len(),
-                actual_insts.len()
+                "wrong instructions length.\nexpected:\n{}got:\n{}",
+                expected,
+                actual,
             );
         }
 
-        for (i, expceted_byte) in expected_insts.iter().enumerate() {
-            if actual_insts[i] != *expceted_byte {
+        for (i, expected_byte) in expected.iter().enumerate() {
+            if actual[i] != *expected_byte {
                 bail!(
-                    "wrong instruction at {}. expected: {}, got: {}.",
+                    "wrong byte at {}. expected: {}, got: {}.\nexpected:\n{}got:\n{}",
                     i,
-                    expceted_byte,
-                    actual_insts[i]
+                    expected_byte,
+                    actual[i],
+                    expected,
+                    actual,
                 );
             }
         }
@@ -161,25 +213,22 @@ mod test {
         Ok(())
     }
 
-    fn test_consts(expected_constants: &[Object], actual: &[Rc<Object>]) -> Result<()> {
-        if expected_constants.len() != actual.len() {
+    fn test_consts(expected: &[Object], actual: &[Rc<Object>]) -> Result<()> {
+        if expected.len() != actual.len() {
             bail!(
-                "wrong number of constants. got: {}, expected: {}.",
+                "wrong number of constants. expected: {}, got: {}.",
+                expected.len(),
                 actual.len(),
-                expected_constants.len()
             );
         }
 
-        for (i, expected_constant) in expected_constants.iter().enumerate() {
-            match expected_constant {
+        for (i, expected_const) in expected.iter().enumerate() {
+            match expected_const {
                 Object::Integer(int_obj) => {
-                    test_integer_object(int_obj.borrow().value, &actual[i]).with_context(|| {
-                        format!("test {} failed. failed to test integer object", i)
-                    })?;
+                    test_integer_object(int_obj.borrow().value, &actual[i])
+                        .with_context(|| format!("constant {} failed", i))?;
                 }
-                _ => {
-                    unimplemented!()
-                }
+                _ => unimplemented!(),
             }
         }
 
@@ -191,14 +240,14 @@ mod test {
             Object::Integer(integer_object) => {
                 if integer_object.borrow().value != expected {
                     bail!(
-                        "the object has wrong value. expected: {}, got: {}.",
+                        "object has wrong value. expected: {}, got: {}.",
                         expected,
                         integer_object.borrow().value
                     );
                 }
             }
             other => {
-                bail!("the object is not IntegerObject. got: {}", other)
+                bail!("object is not Integer. got: {}", other)
             }
         }
 
