@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result};
 
-use crate::code::Instructions;
+use crate::code::{Instruction, Instructions, OpCodeKind};
 use crate::{ast, object};
 
 #[derive(Debug)]
@@ -17,11 +17,18 @@ impl Compiler {
         }
     }
 
-    // fn add_instruction()
+    /// 命令を追加し、追加された命令のオフセットを返す
+    fn add_instruction(&mut self, inst: &Instruction) -> usize {
+        let new_inst_pos = self.bytecode.instructions.len();
+        self.bytecode.instructions.add_inst(inst);
+        new_inst_pos
+    }
 
-    // fn emit()
-
-    // fn add_constant(&mut self, )
+    /// 定数を定数リストに追加し、追加された定数のインデックスを返す
+    fn add_constant(&mut self, obj: Rc<object::Object>) -> usize {
+        self.bytecode.constants.push(obj);
+        self.bytecode.constants.len() - 1
+    }
 
     pub fn compile<T: ast::NodeInterface>(&mut self, node: &T) -> Result<()> {
         match node.get_node() {
@@ -47,6 +54,48 @@ impl Compiler {
                 .compile(&expr_stmt.value)
                 .context("failed to compile the expression.")?,
 
+            ast::Node::Expression(expr) => match expr {
+                ast::Expression::ArrayLiteral(x) => self
+                    .compile(x)
+                    .context("failed to compile the array literal.")?,
+                ast::Expression::Identifier(x) => self
+                    .compile(x)
+                    .context("failed to compile the identifier.")?,
+                ast::Expression::BlockStatement(x) => self
+                    .compile(x)
+                    .context("failed to compile the block statement.")?,
+                ast::Expression::Infix(x) => self
+                    .compile(x)
+                    .context("failed to compile the infix expression.")?,
+                ast::Expression::Prefix(x) => self
+                    .compile(x)
+                    .context("failed to compile the prefix expression.")?,
+                ast::Expression::BoolLiteral(x) => self
+                    .compile(x)
+                    .context("failed to compile the bool literal.")?,
+                ast::Expression::If(x) => self
+                    .compile(x)
+                    .context("failed to compile the if expression.")?,
+                ast::Expression::Function(x) => self
+                    .compile(x)
+                    .context("failed to compile the function literal.")?,
+                ast::Expression::Call(x) => self
+                    .compile(x)
+                    .context("failed to compile the call expression.")?,
+                ast::Expression::StringLiteral(x) => self
+                    .compile(x)
+                    .context("failed to compile the string literal.")?,
+                ast::Expression::IndexExpression(x) => self
+                    .compile(x)
+                    .context("failed to compile the index expression.")?,
+                ast::Expression::HashLiteral(x) => self
+                    .compile(x)
+                    .context("failed to compile the hash literal.")?,
+                ast::Expression::IntegerLiteral(x) => self
+                    .compile(x)
+                    .context("failed to compile the integer literal.")?,
+            },
+
             ast::Node::InfixExpression(infix_expr) => {
                 self.compile(infix_expr.left.as_ref())
                     .context("failed to compile the left expression.")?;
@@ -57,13 +106,18 @@ impl Compiler {
             ast::Node::IntegerLiteral(int_literal) => {
                 let int_obj = object::Object::int(int_literal.value);
 
-                todo!()
+                let operands = &[self.add_constant(Rc::new(int_obj)) as u64];
+
+                self.add_instruction(
+                    &Instruction::new(OpCodeKind::Constant, operands)
+                        .context("failed to create the constant instruction.")?,
+                );
             }
 
             _ => unimplemented!(),
         }
 
-        todo!()
+        Ok(())
     }
 
     pub fn get_bytecode(&self) -> &ByteCode {
