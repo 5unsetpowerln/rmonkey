@@ -3,6 +3,8 @@
 
 mod ast;
 mod builtins;
+mod code;
+mod compiler;
 mod eval;
 mod lexer;
 mod object;
