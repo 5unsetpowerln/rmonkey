@@ -154,7 +154,7 @@ impl fmt::Display for Instruction {
 
 // Instructions
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Instructions(Vec<u8>);
+pub struct Instructions(pub Vec<u8>);
 
 impl Instructions {
     pub fn new() -> Self {

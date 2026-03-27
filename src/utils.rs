@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{Error, Result, bail};
 
 pub fn print_errors(msg: &str, err: Error) {
     println!("{msg}: {err}");
@@ -29,4 +29,14 @@ pub fn concatenate_insts_list(insts_list: &[Vec<u8>]) -> Vec<u8> {
     }
 
     output_insts
+}
+
+pub fn u16_from_be_bytes(array: &[u8]) -> Result<u16> {
+    if array.len() < 2 {
+        bail!("overflow");
+    }
+
+    let mut val = (array[0] as u16) << 8;
+    val |= array[1] as u16;
+    Ok(val)
 }

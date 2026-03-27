@@ -12,6 +12,7 @@ mod parser;
 mod repl;
 mod token;
 mod utils;
+mod vm;
 
 use std::cell::RefCell;
 use std::io::Read;
