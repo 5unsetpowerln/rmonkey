@@ -5,6 +5,7 @@ mod ast;
 mod builtins;
 mod code;
 mod compiler;
+mod disasm;
 mod eval;
 mod lexer;
 mod object;

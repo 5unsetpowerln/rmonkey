@@ -2,8 +2,23 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result};
 
-use crate::code::{Instruction, Instructions, OpCodeKind};
+use crate::code::{OpCodeKind, create_inst};
 use crate::{ast, object};
+
+#[derive(Debug)]
+pub struct ByteCode {
+    pub instructions: Vec<u8>,
+    pub constants: Vec<Rc<object::Object>>,
+}
+
+impl ByteCode {
+    pub fn new() -> Self {
+        Self {
+            instructions: Vec::new(),
+            constants: Vec::new(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Compiler {
@@ -17,15 +32,18 @@ impl Compiler {
         }
     }
 
-    /// 命令を追加し、追加された命令のオフセットを返す
-    fn add_instruction(&mut self, inst: &Instruction) -> usize {
-        let new_inst_pos = self.bytecode.instructions.len();
-        self.bytecode.instructions.add_inst(inst);
-        new_inst_pos
+    fn add_inst(&mut self, kind: OpCodeKind, operands: &[i64]) -> Result<()> {
+        self.bytecode.instructions.extend_from_slice(
+            create_inst(kind, operands)
+                .context("failed to create an instruction")?
+                .as_ref(),
+        );
+
+        Ok(())
     }
 
     /// 定数を定数リストに追加し、追加された定数のインデックスを返す
-    fn add_constant(&mut self, obj: Rc<object::Object>) -> usize {
+    fn add_const(&mut self, obj: Rc<object::Object>) -> usize {
         self.bytecode.constants.push(obj);
         self.bytecode.constants.len() - 1
     }
@@ -106,12 +124,11 @@ impl Compiler {
             ast::Node::IntegerLiteral(int_literal) => {
                 let int_obj = object::Object::int(int_literal.value);
 
-                let operands = &[self.add_constant(Rc::new(int_obj)) as u64];
+                let idx = self.add_const(Rc::new(int_obj));
+                let operands = [idx as i64];
 
-                self.add_instruction(
-                    &Instruction::new(OpCodeKind::Constant, operands)
-                        .context("failed to create the constant instruction.")?,
-                );
+                self.add_inst(OpCodeKind::Constant, &operands)
+                    .context("failed to add the constant instuction.")?;
             }
 
             _ => unimplemented!(),
@@ -125,29 +142,15 @@ impl Compiler {
     }
 }
 
-#[derive(Debug)]
-pub struct ByteCode {
-    pub instructions: Instructions,
-    pub constants: Vec<Rc<object::Object>>,
-}
-
-impl ByteCode {
-    pub fn new() -> Self {
-        Self {
-            instructions: Instructions::new(),
-            constants: Vec::new(),
-        }
-    }
-}
-
 mod test {
     use std::rc::Rc;
 
     use anyhow::{Context, Result, bail};
 
     use crate::ast::Program;
-    use crate::code::{Instruction, Instructions, OpCodeKind};
+    use crate::code::{OpCodeKind, create_inst, insts_from_inst_list};
     use crate::compiler::Compiler;
+    use crate::disasm::disasm;
     use crate::lexer::Lexer;
     use crate::object::Object;
     use crate::parser::Parser;
@@ -155,32 +158,20 @@ mod test {
 
     struct CompilerTestCase {
         input: String,
-        expected_constants: Vec<Object>,
-        expected_instructions: Instructions,
+        expected_consts: Vec<Object>,
+        expected_insts: Vec<u8>,
     }
 
     impl CompilerTestCase {
-        fn new(
-            input: &str,
-            expected_constants: &[Object],
-            expected_instructions: &[Instructions],
-        ) -> Self {
-            let expected_instructions = Instructions::merge(expected_instructions);
+        fn new(input: &str, expected_consts: &[Object], expected_inst_list: &[Vec<u8>]) -> Self {
+            let expected_insts = insts_from_inst_list(expected_inst_list);
 
             Self {
                 input: input.to_string(),
-                expected_constants: expected_constants.to_vec(),
-                expected_instructions,
+                expected_consts: expected_consts.to_vec(),
+                expected_insts,
             }
         }
-    }
-
-    /// Instruction から Instructions を作るヘルパー
-    fn make_insts(kind: OpCodeKind, operands: &[u64]) -> Instructions {
-        let inst = Instruction::new(kind, operands).unwrap();
-        let mut insts = Instructions::new();
-        insts.add_inst(&inst);
-        insts
     }
 
     #[test]
@@ -189,8 +180,8 @@ mod test {
             "1 + 2",
             &[Object::int(1), Object::int(2)],
             &[
-                make_insts(OpCodeKind::Constant, &[0]),
-                make_insts(OpCodeKind::Constant, &[1]),
+                create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                create_inst(OpCodeKind::Constant, &[1]).unwrap(),
             ],
         )];
 
@@ -218,7 +209,7 @@ mod test {
 
             let bytecode = compiler.get_bytecode();
 
-            test_insts(&test.expected_instructions, &bytecode.instructions).unwrap_or_else(|err| {
+            test_insts(&test.expected_insts, &bytecode.instructions).unwrap_or_else(|err| {
                 print_errors(
                     &format!("test {} failed. failed to test instructions.", i),
                     err,
@@ -226,7 +217,7 @@ mod test {
                 panic!();
             });
 
-            test_consts(&test.expected_constants, &bytecode.constants).unwrap_or_else(|err| {
+            test_consts(&test.expected_consts, &bytecode.constants).unwrap_or_else(|err| {
                 print_errors(
                     &format!("test {} failed. failed to test constants.", i),
                     err,
@@ -242,12 +233,12 @@ mod test {
         parser.parse_program()
     }
 
-    fn test_insts(expected: &Instructions, actual: &Instructions) -> Result<()> {
+    fn test_insts(expected: &[u8], actual: &[u8]) -> Result<()> {
         if expected.len() != actual.len() {
             bail!(
                 "wrong instructions length.\nexpected:\n{}got:\n{}",
-                expected,
-                actual,
+                expected.len(),
+                actual.len(),
             );
         }
 
@@ -258,8 +249,8 @@ mod test {
                     i,
                     expected_byte,
                     actual[i],
-                    expected,
-                    actual,
+                    disasm(expected),
+                    disasm(actual),
                 );
             }
         }

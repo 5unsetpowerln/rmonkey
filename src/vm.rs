@@ -3,7 +3,7 @@ use std::rc::Rc;
 use anyhow::{Context, Result, bail};
 use thiserror::Error;
 
-use crate::code::{Instruction, Instructions, OpCodeKind};
+use crate::code::OpCodeKind;
 use crate::compiler::ByteCode;
 use crate::object::Object;
 use crate::utils::u16_from_be_bytes;
@@ -12,10 +12,10 @@ const STACK_SIZE: usize = 2048;
 
 #[derive(Debug, Error)]
 pub enum VmError {
-    #[error("instruction pointer overflow. length: {instruction_length}, ip: {instruction_length}")]
+    #[error("instruction pointer overflow. length: {inst_length}, ip: {inst_pointer}")]
     InstructionPointerOverflow {
-        instruction_length: usize,
-        instruction_pointer: usize,
+        inst_length: usize,
+        inst_pointer: usize,
     },
 
     #[error("unknown opcode byte: {byte}")]
@@ -32,7 +32,7 @@ pub enum VmError {
 
 pub struct Vm {
     constants: Vec<Rc<Object>>,
-    instructions: Instructions,
+    instructions: Vec<u8>,
     stack: Vec<Rc<Object>>,
     sp: usize,
 }
@@ -56,31 +56,32 @@ impl Vm {
 
         while ip < self.instructions.len() {
             // 命令の取得
-            //// ここでlookup関数などを実行するとクソ遅くなるので生のバイトから変換したほうが良い (今の実装はそう)
-            let op_kind = if let Some(b) = self.instructions.get(ip) {
-                if let Ok(o) = OpCodeKind::from_u8(*b) {
-                    o
-                } else {
-                    bail!(VmError::UnknownOpCodeByte { byte: *b });
+            let op_kind = match self.instructions.get(ip) {
+                Some(x) => match OpCodeKind::from_u8(*x) {
+                    Ok(y) => y,
+                    Err(_) => {
+                        bail!(VmError::UnknownOpCodeByte { byte: *x });
+                    }
+                },
+                None => {
+                    bail!(VmError::InstructionPointerOverflow {
+                        inst_length: self.instructions.len(),
+                        inst_pointer: ip,
+                    });
                 }
-            } else {
-                bail!(VmError::InstructionPointerOverflow {
-                    instruction_length: self.instructions.len(),
-                    instruction_pointer: ip,
-                });
             };
             ip += 1;
 
             // 命令ごとの処理
             match op_kind {
                 OpCodeKind::Constant => {
-                    // 定数配列へのインデックスを取得する
+                    // 定数配列のインデックスを取得する
                     let raw_operands = if let Some(x) = self.instructions.get(ip..ip + 2) {
                         x
                     } else {
                         bail!(VmError::InstructionPointerOverflow {
-                            instruction_length: self.instructions.len(),
-                            instruction_pointer: ip + 2
+                            inst_length: self.instructions.len(),
+                            inst_pointer: ip + 2
                         });
                     };
 
@@ -98,10 +99,12 @@ impl Vm {
                     };
 
                     // 定数をスタックにpushする
-                    self.push(const_value.clone());
+                    self.push(const_value.clone())
+                        .context("failed to push the constant.")?;
 
                     println!("const_idx: {}", const_idx);
                 }
+                _ => unimplemented!(),
             }
         }
 
