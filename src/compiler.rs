@@ -75,9 +75,12 @@ impl Compiler {
                     .context("failed to compile the return statement.")?,
             },
 
-            ast::Node::ExpressionStatement(expr_stmt) => self
-                .compile(&expr_stmt.value)
-                .context("failed to compile the expression.")?,
+            ast::Node::ExpressionStatement(expr_stmt) => {
+                self.compile(&expr_stmt.value)
+                    .context("failed to compile the expression.")?;
+                self.add_inst(OpCodeKind::Pop, &[])
+                    .context("failed to add the pop instruction.")?;
+            }
 
             ast::Node::Expression(expr) => match expr {
                 ast::Expression::ArrayLiteral(x) => self
@@ -303,15 +306,28 @@ mod test {
 
     #[test]
     fn test_integer_arithmetic() {
-        let tests = [CompilerTestCase::new(
-            "1 + 2",
-            &[Object::int(1), Object::int(2)],
-            &[
-                create_inst(OpCodeKind::Constant, &[0]).unwrap(),
-                create_inst(OpCodeKind::Constant, &[1]).unwrap(),
-                create_inst(OpCodeKind::Add, &[]).unwrap(),
-            ],
-        )];
+        let tests = [
+            CompilerTestCase::new(
+                "1 + 2",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Add, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "1; 2",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
 
         run_compiler_tests(&tests);
     }

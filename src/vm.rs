@@ -38,6 +38,7 @@ pub struct Vm {
     instructions: Vec<u8>,
     stack: Vec<Rc<Object>>,
     sp: usize,
+    last_stack_top: Option<Rc<Object>>,
 }
 
 impl Vm {
@@ -51,6 +52,7 @@ impl Vm {
             instructions: bytecode.instructions.clone(),
             stack,
             sp: 0,
+            last_stack_top: None,
         }
     }
 
@@ -105,6 +107,7 @@ impl Vm {
                     self.push(const_value.clone())
                         .context("failed to push the constant.")?;
                 }
+
                 OpCodeKind::Add => {
                     let right = self.pop().context("failed to pop the right value.")?;
                     let left = self.pop().context("failed to pop the left value.")?;
@@ -118,6 +121,10 @@ impl Vm {
                         }
                         _ => {}
                     }
+                }
+
+                OpCodeKind::Pop => {
+                    self.pop().context("failed to pop from the stack.")?;
                 }
                 _ => unimplemented!(),
             }
@@ -146,7 +153,10 @@ impl Vm {
 
         self.sp -= 1;
 
-        Ok(self.stack[self.sp].clone())
+        let value = self.stack[self.sp].clone();
+        self.last_stack_top.replace(value.clone());
+
+        Ok(value)
     }
 
     pub fn stack_top(&self) -> Option<Rc<Object>> {
@@ -155,6 +165,10 @@ impl Vm {
         }
 
         Some(self.stack[self.sp - 1].clone())
+    }
+
+    pub fn last_stack_top(&self) -> Option<Rc<Object>> {
+        self.last_stack_top.clone()
     }
 }
 
@@ -221,8 +235,8 @@ mod test {
             let mut vm = Vm::new(bytecode);
             vm.run().context("failed to run a bytecode.")?;
 
-            let stack_top = vm.stack_top();
-            test_expected_object(&test.expected, stack_top)?;
+            let last_stack_top = vm.last_stack_top();
+            test_expected_object(&test.expected, last_stack_top)?;
         }
         Ok(())
     }

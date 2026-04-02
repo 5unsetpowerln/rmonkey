@@ -25,6 +25,7 @@ pub enum CodeError {
 pub enum OpCodeKind {
     Constant,
     Add,
+    Pop,
 }
 
 impl OpCodeKind {
@@ -32,6 +33,7 @@ impl OpCodeKind {
         match byte {
             b if b == Self::Constant as u8 => Ok(Self::Constant),
             b if b == Self::Add as u8 => Ok(Self::Add),
+            b if b == Self::Pop as u8 => Ok(Self::Pop),
             _ => bail!(CodeError::UnknownOpCodeByte { byte }),
         }
     }
@@ -61,6 +63,7 @@ impl OpCodeDef {
         match kind {
             OpCodeKind::Constant => &Self::CONSTANT,
             OpCodeKind::Add => &Self::ADD,
+            OpCodeKind::Pop => &Self::POP,
         }
     }
 
@@ -71,6 +74,7 @@ impl OpCodeDef {
 
     const CONSTANT: OpCodeDef = OpCodeDef::new(OpCodeKind::Constant, "OpConstant", &[2]);
     const ADD: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpAdd", &[]);
+    const POP: OpCodeDef = OpCodeDef::new(OpCodeKind::Pop, "OpPop", &[]);
 }
 
 impl fmt::Display for OpCodeDef {

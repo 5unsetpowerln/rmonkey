@@ -53,8 +53,8 @@ pub fn start() {
             continue;
         }
 
-        if let Some(stack_top) = vm.stack_top() {
-            println!("{}", stack_top.as_ref());
+        if let Some(last_stack_top) = vm.last_stack_top() {
+            println!("{}", last_stack_top.as_ref());
         }
     }
 }
