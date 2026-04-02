@@ -86,3 +86,26 @@ impl fmt::Display for Instructions {
         Ok(())
     }
 }
+
+mod test {
+    use crate::code::{OpCodeKind, create_inst, insts_from_inst_list};
+
+    use super::disasm;
+
+    #[test]
+    fn test_disasm() {
+        let insts = insts_from_inst_list(&[
+            create_inst(OpCodeKind::Add, &[]).unwrap(),
+            create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+            create_inst(OpCodeKind::Constant, &[65535]).unwrap(),
+        ]);
+
+        let expected = "\
+0000 OpAdd
+0001 OpConstant 2
+0004 OpConstant 65535
+";
+
+        assert_eq!(disasm(&insts), expected);
+    }
+}
