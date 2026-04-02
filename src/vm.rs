@@ -104,8 +104,6 @@ impl Vm {
                     // 定数をスタックにpushする
                     self.push(const_value.clone())
                         .context("failed to push the constant.")?;
-
-                    println!("const_idx: {}", const_idx);
                 }
                 OpCodeKind::Add => {
                     let right = self.pop().context("failed to pop the right value.")?;

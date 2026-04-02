@@ -2,11 +2,13 @@ use std::cell::RefCell;
 use std::io::{Write, stdin, stdout};
 use std::rc::Rc;
 
+use crate::compiler::Compiler;
 use crate::eval::eval;
 use crate::lexer::Lexer;
 use crate::object::Environment;
 use crate::parser::Parser;
 use crate::utils::print_errors;
+use crate::vm::Vm;
 
 const PROMPT: &str = ">> ";
 
@@ -17,10 +19,8 @@ pub fn start() {
     let stdin_ = stdin();
     let mut stdout_ = stdout();
 
-    let env = Rc::new(RefCell::new(Environment::new(None)));
-
     loop {
-        print!("{PROMPT}");
+        print!("{}", PROMPT);
         stdout_.flush().expect("failed to flush stdout");
 
         let mut line = String::new();
@@ -40,16 +40,21 @@ pub fn start() {
             }
         };
 
-        let evaluated = match eval(&program, env.clone()) {
-            Ok(x) => x,
-            Err(err) => {
-                print_errors("failed to evaluate the program", err);
-                continue;
-            }
-        };
+        let mut compiler = Compiler::new();
+        if let Err(err) = compiler.compile(&program) {
+            print_errors("failed to compile the program", err);
+            continue;
+        }
 
-        if let Some(value) = evaluated {
-            println!("{}", value)
+        let bytecode = compiler.get_bytecode();
+        let mut vm = Vm::new(bytecode);
+        if let Err(err) = vm.run() {
+            print_errors("failed to run the program on the vm", err);
+            continue;
+        }
+
+        if let Some(stack_top) = vm.stack_top() {
+            println!("{}", stack_top.as_ref());
         }
     }
 }
