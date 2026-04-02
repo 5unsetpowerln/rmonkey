@@ -1,9 +1,16 @@
 use std::rc::Rc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use thiserror::Error;
 
 use crate::code::{OpCodeKind, create_inst};
 use crate::{ast, object};
+
+#[derive(Debug, Error)]
+pub enum CompileError {
+    #[error("unknown operator `{operator}`")]
+    UnknownOperator { operator: String },
+}
 
 #[derive(Debug)]
 pub struct ByteCode {
@@ -119,6 +126,15 @@ impl Compiler {
                     .context("failed to compile the left expression.")?;
                 self.compile(infix_expr.right.as_ref())
                     .context("failed to compile the right expression.")?;
+
+                match infix_expr.operator.as_str() {
+                    "+" => self
+                        .add_inst(OpCodeKind::Add, &[])
+                        .context("failed to add the add instruction")?,
+                    _ => bail!(CompileError::UnknownOperator {
+                        operator: infix_expr.operator.clone()
+                    }),
+                };
             }
 
             ast::Node::IntegerLiteral(int_literal) => {
@@ -172,20 +188,6 @@ mod test {
                 expected_insts,
             }
         }
-    }
-
-    #[test]
-    fn test_integer_arithmetic() {
-        let tests = [CompilerTestCase::new(
-            "1 + 2",
-            &[Object::int(1), Object::int(2)],
-            &[
-                create_inst(OpCodeKind::Constant, &[0]).unwrap(),
-                create_inst(OpCodeKind::Constant, &[1]).unwrap(),
-            ],
-        )];
-
-        run_compiler_tests(&tests);
     }
 
     fn run_compiler_tests(tests: &[CompilerTestCase]) {
@@ -297,5 +299,20 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_integer_arithmetic() {
+        let tests = [CompilerTestCase::new(
+            "1 + 2",
+            &[Object::int(1), Object::int(2)],
+            &[
+                create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                create_inst(OpCodeKind::Add, &[]).unwrap(),
+            ],
+        )];
+
+        run_compiler_tests(&tests);
     }
 }

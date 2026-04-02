@@ -11,7 +11,7 @@ use crate::utils::u16_from_be_bytes;
 const STACK_SIZE: usize = 2048;
 
 #[derive(Debug, Error)]
-pub enum VmError {
+pub enum RuntimeError {
     #[error("instruction pointer overflow. length: {inst_length}, ip: {inst_pointer}")]
     InstructionPointerOverflow {
         inst_length: usize,
@@ -28,6 +28,9 @@ pub enum VmError {
         "constants overflow. length of the global constants array is `{size}`, and constant associated with `{idx}` is not found."
     )]
     ConstantsOverflow { size: usize, idx: usize },
+
+    #[error("cannot pop from the stack because it is empty.")]
+    PopFromEmptyStack,
 }
 
 pub struct Vm {
@@ -60,11 +63,11 @@ impl Vm {
                 Some(x) => match OpCodeKind::from_u8(*x) {
                     Ok(y) => y,
                     Err(_) => {
-                        bail!(VmError::UnknownOpCodeByte { byte: *x });
+                        bail!(RuntimeError::UnknownOpCodeByte { byte: *x });
                     }
                 },
                 None => {
-                    bail!(VmError::InstructionPointerOverflow {
+                    bail!(RuntimeError::InstructionPointerOverflow {
                         inst_length: self.instructions.len(),
                         inst_pointer: ip,
                     });
@@ -79,7 +82,7 @@ impl Vm {
                     let raw_operands = if let Some(x) = self.instructions.get(ip..ip + 2) {
                         x
                     } else {
-                        bail!(VmError::InstructionPointerOverflow {
+                        bail!(RuntimeError::InstructionPointerOverflow {
                             inst_length: self.instructions.len(),
                             inst_pointer: ip + 2
                         });
@@ -92,7 +95,7 @@ impl Vm {
                     // 定数を取得する
                     let const_value = match self.constants.get(const_idx) {
                         Some(x) => x,
-                        None => bail!(VmError::ConstantsOverflow {
+                        None => bail!(RuntimeError::ConstantsOverflow {
                             size: self.constants.len(),
                             idx: const_idx
                         }),
@@ -104,6 +107,20 @@ impl Vm {
 
                     println!("const_idx: {}", const_idx);
                 }
+                OpCodeKind::Add => {
+                    let right = self.pop().context("failed to pop the right value.")?;
+                    let left = self.pop().context("failed to pop the left value.")?;
+
+                    match (left.as_ref(), right.as_ref()) {
+                        (Object::Integer(left), Object::Integer(right)) => {
+                            let result = left.borrow().value + right.borrow().value;
+
+                            self.push(Rc::new(Object::int(result)))
+                                .context("failed to push the result value.")?;
+                        }
+                        _ => {}
+                    }
+                }
                 _ => unimplemented!(),
             }
         }
@@ -114,7 +131,7 @@ impl Vm {
 
     fn push(&mut self, obj: Rc<Object>) -> Result<()> {
         if self.sp >= STACK_SIZE {
-            bail!(VmError::StackOverflow);
+            bail!(RuntimeError::StackOverflow);
         }
 
         self.stack[self.sp] = obj;
@@ -122,6 +139,16 @@ impl Vm {
         self.sp += 1;
 
         Ok(())
+    }
+
+    fn pop(&mut self) -> Result<Rc<Object>> {
+        if self.sp == 0 {
+            bail!(RuntimeError::PopFromEmptyStack);
+        }
+
+        self.sp -= 1;
+
+        Ok(self.stack[self.sp].clone())
     }
 
     pub fn stack_top(&self) -> Option<Rc<Object>> {
