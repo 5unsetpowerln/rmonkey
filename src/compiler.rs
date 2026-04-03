@@ -134,6 +134,15 @@ impl Compiler {
                     "+" => self
                         .add_inst(OpCodeKind::Add, &[])
                         .context("failed to add the add instruction")?,
+                    "-" => self
+                        .add_inst(OpCodeKind::Sub, &[])
+                        .context("failed to add the sub instruction")?,
+                    "*" => self
+                        .add_inst(OpCodeKind::Mul, &[])
+                        .context("failed to add the mul instruction")?,
+                    "/" => self
+                        .add_inst(OpCodeKind::Div, &[])
+                        .context("failed to add the div instruction")?,
                     _ => bail!(CompileError::UnknownOperator {
                         operator: infix_expr.operator.clone()
                     }),
@@ -314,6 +323,36 @@ mod test {
                     create_inst(OpCodeKind::Constant, &[0]).unwrap(),
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
                     create_inst(OpCodeKind::Add, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "1 - 2",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Sub, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "1 * 2",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Mul, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "2 / 1",
+                &[Object::int(2), Object::int(1)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Div, &[]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),

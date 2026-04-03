@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use anyhow::{Context, Result, bail};
@@ -5,7 +6,7 @@ use thiserror::Error;
 
 use crate::code::OpCodeKind;
 use crate::compiler::ByteCode;
-use crate::object::Object;
+use crate::object::{IntegerObject, Object};
 use crate::utils::u16_from_be_bytes;
 
 const STACK_SIZE: usize = 2048;
@@ -31,6 +32,9 @@ pub enum RuntimeError {
 
     #[error("cannot pop from the stack because it is empty.")]
     PopFromEmptyStack,
+
+    #[error("unknown types of operands for infix operation. left: {left}, right: {right}.")]
+    UnknownOperandsTypesForInfixOperation { left: String, right: String },
 }
 
 pub struct Vm {
@@ -108,19 +112,9 @@ impl Vm {
                         .context("failed to push the constant.")?;
                 }
 
-                OpCodeKind::Add => {
-                    let right = self.pop().context("failed to pop the right value.")?;
-                    let left = self.pop().context("failed to pop the left value.")?;
-
-                    match (left.as_ref(), right.as_ref()) {
-                        (Object::Integer(left), Object::Integer(right)) => {
-                            let result = left.borrow().value + right.borrow().value;
-
-                            self.push(Rc::new(Object::int(result)))
-                                .context("failed to push the result value.")?;
-                        }
-                        _ => {}
-                    }
+                OpCodeKind::Add | OpCodeKind::Sub | OpCodeKind::Mul | OpCodeKind::Div => {
+                    self.execute_infix_operation(op_kind)
+                        .context("failed to execute infix operation.")?;
                 }
 
                 OpCodeKind::Pop => {
@@ -131,6 +125,44 @@ impl Vm {
         }
 
         // todo!()
+        Ok(())
+    }
+
+    fn execute_infix_operation(&mut self, op_kind: OpCodeKind) -> Result<()> {
+        let right = self.pop().context("failed to pop the right value.")?;
+        let left = self.pop().context("failed to pop the left value.")?;
+
+        match (left.as_ref(), right.as_ref()) {
+            (Object::Integer(left), Object::Integer(right)) => {
+                self.execute_integer_infix_operation(op_kind, left.clone(), right.clone())
+                    .context("failed to execute integer infix operation.")?;
+            }
+            _ => bail!(RuntimeError::UnknownOperandsTypesForInfixOperation {
+                left: left.to_string(),
+                right: right.to_string()
+            }),
+        }
+
+        Ok(())
+    }
+
+    fn execute_integer_infix_operation(
+        &mut self,
+        op_kind: OpCodeKind,
+        left: Rc<RefCell<IntegerObject>>,
+        right: Rc<RefCell<IntegerObject>>,
+    ) -> Result<()> {
+        let result = match op_kind {
+            OpCodeKind::Add => left.borrow().value + right.borrow().value,
+            OpCodeKind::Sub => left.borrow().value - right.borrow().value,
+            OpCodeKind::Mul => left.borrow().value * right.borrow().value,
+            OpCodeKind::Div => left.borrow().value / right.borrow().value,
+            _ => unreachable!(),
+        };
+
+        self.push(Rc::new(Object::int(result)))
+            .context("failed to push the result value.")?;
+
         Ok(())
     }
 
@@ -276,6 +308,15 @@ mod test {
             VmTestCase::new("1", object::Object::int(1)),
             VmTestCase::new("2", object::Object::int(2)),
             VmTestCase::new("1 + 2", object::Object::int(3)),
+            VmTestCase::new("1 - 2", object::Object::int(-1)),
+            VmTestCase::new("1 * 2", object::Object::int(2)),
+            VmTestCase::new("4 / 2", object::Object::int(2)),
+            VmTestCase::new("50 / 2 * 2 + 10 - 5", object::Object::int(55)),
+            VmTestCase::new("5 + 5 + 5 + 5 - 10", object::Object::int(10)),
+            VmTestCase::new("2 * 2 * 2 * 2 * 2", object::Object::int(32)),
+            VmTestCase::new("5 * 2 + 10", object::Object::int(20)),
+            VmTestCase::new("5 + 2 * 10", object::Object::int(25)),
+            VmTestCase::new("5 * (2 + 10)", object::Object::int(60)),
         ];
         run_vm_tests(&tests)
     }

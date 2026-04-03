@@ -24,16 +24,22 @@ pub enum CodeError {
 #[repr(u8)]
 pub enum OpCodeKind {
     Constant,
-    Add,
     Pop,
+    Add,
+    Sub,
+    Mul,
+    Div,
 }
 
 impl OpCodeKind {
     pub fn from_u8(byte: u8) -> Result<Self> {
         match byte {
             b if b == Self::Constant as u8 => Ok(Self::Constant),
-            b if b == Self::Add as u8 => Ok(Self::Add),
             b if b == Self::Pop as u8 => Ok(Self::Pop),
+            b if b == Self::Add as u8 => Ok(Self::Add),
+            b if b == Self::Sub as u8 => Ok(Self::Sub),
+            b if b == Self::Mul as u8 => Ok(Self::Mul),
+            b if b == Self::Div as u8 => Ok(Self::Div),
             _ => bail!(CodeError::UnknownOpCodeByte { byte }),
         }
     }
@@ -62,8 +68,11 @@ impl OpCodeDef {
     pub fn lookup(kind: OpCodeKind) -> &'static Self {
         match kind {
             OpCodeKind::Constant => &Self::CONSTANT,
-            OpCodeKind::Add => &Self::ADD,
             OpCodeKind::Pop => &Self::POP,
+            OpCodeKind::Add => &Self::ADD,
+            OpCodeKind::Sub => &Self::SUB,
+            OpCodeKind::Mul => &Self::MUL,
+            OpCodeKind::Div => &Self::DIV,
         }
     }
 
@@ -73,8 +82,11 @@ impl OpCodeDef {
     }
 
     const CONSTANT: OpCodeDef = OpCodeDef::new(OpCodeKind::Constant, "OpConstant", &[2]);
-    const ADD: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpAdd", &[]);
     const POP: OpCodeDef = OpCodeDef::new(OpCodeKind::Pop, "OpPop", &[]);
+    const ADD: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpAdd", &[]);
+    const SUB: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpSub", &[]);
+    const MUL: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpMul", &[]);
+    const DIV: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpDiv", &[]);
 }
 
 impl fmt::Display for OpCodeDef {
