@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use thiserror::Error;
@@ -15,7 +15,7 @@ pub enum CompileError {
 #[derive(Debug)]
 pub struct ByteCode {
     pub instructions: Vec<u8>,
-    pub constants: Vec<Rc<object::Object>>,
+    pub constants: Vec<Arc<object::Object>>,
 }
 
 impl ByteCode {
@@ -50,7 +50,7 @@ impl Compiler {
     }
 
     /// 定数を定数リストに追加し、追加された定数のインデックスを返す
-    fn add_const(&mut self, obj: Rc<object::Object>) -> usize {
+    fn add_const(&mut self, obj: Arc<object::Object>) -> usize {
         self.bytecode.constants.push(obj);
         self.bytecode.constants.len() - 1
     }
@@ -152,11 +152,21 @@ impl Compiler {
             ast::Node::IntegerLiteral(int_literal) => {
                 let int_obj = object::Object::int(int_literal.value);
 
-                let idx = self.add_const(Rc::new(int_obj));
+                let idx = self.add_const(Arc::new(int_obj));
                 let operands = [idx as i64];
 
                 self.add_inst(OpCodeKind::Constant, &operands)
                     .context("failed to add the constant instuction.")?;
+            }
+
+            ast::Node::BoolLiteral(bool_literal) => {
+                if bool_literal.value {
+                    self.add_inst(OpCodeKind::True, &[])
+                        .context("failed to add the bool instruction.")?;
+                } else {
+                    self.add_inst(OpCodeKind::False, &[])
+                        .context("failed to add the bool instruction.")?;
+                }
             }
 
             _ => unimplemented!(),
@@ -171,7 +181,7 @@ impl Compiler {
 }
 
 mod test {
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     use anyhow::{Context, Result, bail};
 
@@ -272,7 +282,7 @@ mod test {
         Ok(())
     }
 
-    fn test_consts(expected: &[Object], actual: &[Rc<Object>]) -> Result<()> {
+    fn test_consts(expected: &[Object], actual: &[Arc<Object>]) -> Result<()> {
         if expected.len() != actual.len() {
             bail!(
                 "wrong number of constants. expected: {}, got: {}.",
@@ -284,7 +294,7 @@ mod test {
         for (i, expected_const) in expected.iter().enumerate() {
             match expected_const {
                 Object::Integer(int_obj) => {
-                    test_integer_object(int_obj.borrow().value, &actual[i])
+                    test_integer_object(int_obj.read().unwrap().value, &actual[i])
                         .with_context(|| format!("constant {} failed", i))?;
                 }
                 _ => unimplemented!(),
@@ -297,11 +307,11 @@ mod test {
     fn test_integer_object(expected: i64, actual: &Object) -> Result<()> {
         match actual {
             Object::Integer(integer_object) => {
-                if integer_object.borrow().value != expected {
+                if integer_object.read().unwrap().value != expected {
                     bail!(
                         "object has wrong value. expected: {}, got: {}.",
                         expected,
-                        integer_object.borrow().value
+                        integer_object.read().unwrap().value
                     );
                 }
             }
@@ -363,6 +373,30 @@ mod test {
                     create_inst(OpCodeKind::Constant, &[0]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_bool_expressions() {
+        let tests = [
+            CompilerTestCase::new(
+                "true",
+                &[],
+                &[
+                    create_inst(OpCodeKind::True, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "false",
+                &[],
+                &[
+                    create_inst(OpCodeKind::False, &[]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),

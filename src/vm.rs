@@ -1,5 +1,5 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::LazyLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result, bail};
 use thiserror::Error;
@@ -37,19 +37,22 @@ pub enum RuntimeError {
     UnknownOperandsTypesForInfixOperation { left: String, right: String },
 }
 
+static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
+static FALSE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(false)));
+
 pub struct Vm {
-    constants: Vec<Rc<Object>>,
+    constants: Vec<Arc<Object>>,
     instructions: Vec<u8>,
-    stack: Vec<Rc<Object>>,
+    stack: Vec<Arc<Object>>,
     sp: usize,
-    last_stack_top: Option<Rc<Object>>,
+    last_stack_top: Option<Arc<Object>>,
 }
 
 impl Vm {
     pub fn new(bytecode: &ByteCode) -> Self {
         let mut stack = Vec::with_capacity(STACK_SIZE);
 
-        stack.resize(STACK_SIZE, Rc::new(Object::null()));
+        stack.resize(STACK_SIZE, Arc::new(Object::null()));
 
         Self {
             constants: bytecode.constants.clone(),
@@ -117,6 +120,15 @@ impl Vm {
                         .context("failed to execute infix operation.")?;
                 }
 
+                OpCodeKind::True => {
+                    self.push(TRUE.clone()).context("failed to push `true`.")?;
+                }
+
+                OpCodeKind::False => {
+                    self.push(FALSE.clone())
+                        .context("failed to push `false`.")?;
+                }
+
                 OpCodeKind::Pop => {
                     self.pop().context("failed to pop from the stack.")?;
                 }
@@ -124,7 +136,6 @@ impl Vm {
             }
         }
 
-        // todo!()
         Ok(())
     }
 
@@ -149,24 +160,24 @@ impl Vm {
     fn execute_integer_infix_operation(
         &mut self,
         op_kind: OpCodeKind,
-        left: Rc<RefCell<IntegerObject>>,
-        right: Rc<RefCell<IntegerObject>>,
+        left: Arc<RwLock<IntegerObject>>,
+        right: Arc<RwLock<IntegerObject>>,
     ) -> Result<()> {
         let result = match op_kind {
-            OpCodeKind::Add => left.borrow().value + right.borrow().value,
-            OpCodeKind::Sub => left.borrow().value - right.borrow().value,
-            OpCodeKind::Mul => left.borrow().value * right.borrow().value,
-            OpCodeKind::Div => left.borrow().value / right.borrow().value,
+            OpCodeKind::Add => left.read().unwrap().value + right.read().unwrap().value,
+            OpCodeKind::Sub => left.read().unwrap().value - right.read().unwrap().value,
+            OpCodeKind::Mul => left.read().unwrap().value * right.read().unwrap().value,
+            OpCodeKind::Div => left.read().unwrap().value / right.read().unwrap().value,
             _ => unreachable!(),
         };
 
-        self.push(Rc::new(Object::int(result)))
+        self.push(Arc::new(Object::int(result)))
             .context("failed to push the result value.")?;
 
         Ok(())
     }
 
-    fn push(&mut self, obj: Rc<Object>) -> Result<()> {
+    fn push(&mut self, obj: Arc<Object>) -> Result<()> {
         if self.sp >= STACK_SIZE {
             bail!(RuntimeError::StackOverflow);
         }
@@ -178,7 +189,7 @@ impl Vm {
         Ok(())
     }
 
-    fn pop(&mut self) -> Result<Rc<Object>> {
+    fn pop(&mut self) -> Result<Arc<Object>> {
         if self.sp == 0 {
             bail!(RuntimeError::PopFromEmptyStack);
         }
@@ -191,7 +202,7 @@ impl Vm {
         Ok(value)
     }
 
-    pub fn stack_top(&self) -> Option<Rc<Object>> {
+    pub fn stack_top(&self) -> Option<Arc<Object>> {
         if self.sp == 0 {
             return None;
         }
@@ -199,13 +210,13 @@ impl Vm {
         Some(self.stack[self.sp - 1].clone())
     }
 
-    pub fn last_stack_top(&self) -> Option<Rc<Object>> {
+    pub fn last_stack_top(&self) -> Option<Arc<Object>> {
         self.last_stack_top.clone()
     }
 }
 
 mod test {
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     use anyhow::{Context, Result, bail};
 
@@ -223,10 +234,10 @@ mod test {
         Ok(program)
     }
 
-    fn test_integer_object(expected: i64, obj: Rc<object::Object>) -> Result<()> {
+    fn test_integer_object(expected: i64, obj: Arc<object::Object>) -> Result<()> {
         match &*obj {
             object::Object::Integer(inner) => {
-                let inner_value = inner.borrow().value;
+                let inner_value = inner.read().unwrap().value;
                 if inner_value != expected {
                     bail!(
                         "object has wrong value. expected: {}, got: {}.",
@@ -275,7 +286,7 @@ mod test {
 
     fn test_expected_object(
         expected: &object::Object,
-        obj: Option<Rc<object::Object>>,
+        obj: Option<Arc<object::Object>>,
     ) -> Result<()> {
         let obj = if let Some(o) = obj {
             o
@@ -285,8 +296,19 @@ mod test {
 
         match (expected, obj.as_ref()) {
             (object::Object::Integer(expected), object::Object::Integer(actual)) => {
-                let expected = expected.borrow().value;
-                let actual = actual.borrow().value;
+                let expected = expected.read().unwrap().value;
+                let actual = actual.read().unwrap().value;
+                if expected != actual {
+                    bail!(
+                        "object has wrong value. expected: {}, got: {}.",
+                        expected,
+                        actual
+                    )
+                }
+            }
+            (object::Object::Bool(expected), object::Object::Bool(actual)) => {
+                let expected = expected.read().unwrap().value;
+                let actual = actual.read().unwrap().value;
                 if expected != actual {
                     bail!(
                         "object has wrong value. expected: {}, got: {}.",
@@ -296,7 +318,11 @@ mod test {
                 }
             }
             _ => {
-                return Err(anyhow::anyhow!("object is not Integer. got: {}", obj));
+                return Err(anyhow::anyhow!(
+                    "unsupported objects: {} and {}",
+                    expected,
+                    obj
+                ));
             }
         }
         Ok(())
@@ -319,5 +345,15 @@ mod test {
             VmTestCase::new("5 * (2 + 10)", object::Object::int(60)),
         ];
         run_vm_tests(&tests)
+    }
+
+    #[test]
+    fn test_bool_expressions() {
+        let tests = [
+            VmTestCase::new("true", object::Object::bool(true)),
+            VmTestCase::new("false", object::Object::bool(false)),
+        ];
+
+        run_vm_tests(&tests);
     }
 }

@@ -15,11 +15,10 @@ mod token;
 mod utils;
 mod vm;
 
-use std::cell::RefCell;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 use clap::Parser;
 
@@ -60,7 +59,7 @@ fn main() {
                 print_errors("failed to parse the program", err);
                 panic!();
             });
-            let environment = Rc::new(RefCell::new(Environment::new(None)));
+            let environment = Arc::new(RwLock::new(Environment::new(None)));
             let evaluated = eval(&program, environment).unwrap_or_else(|err| {
                 print_errors("failed to eval the program", err);
                 panic!();

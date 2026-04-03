@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::io::{Write, stdin, stdout};
-use std::rc::Rc;
 
 use crate::compiler::Compiler;
 use crate::eval::eval;

@@ -29,6 +29,8 @@ pub enum OpCodeKind {
     Sub,
     Mul,
     Div,
+    True,
+    False,
 }
 
 impl OpCodeKind {
@@ -40,6 +42,8 @@ impl OpCodeKind {
             b if b == Self::Sub as u8 => Ok(Self::Sub),
             b if b == Self::Mul as u8 => Ok(Self::Mul),
             b if b == Self::Div as u8 => Ok(Self::Div),
+            b if b == Self::True as u8 => Ok(Self::True),
+            b if b == Self::False as u8 => Ok(Self::False),
             _ => bail!(CodeError::UnknownOpCodeByte { byte }),
         }
     }
@@ -73,6 +77,8 @@ impl OpCodeDef {
             OpCodeKind::Sub => &Self::SUB,
             OpCodeKind::Mul => &Self::MUL,
             OpCodeKind::Div => &Self::DIV,
+            OpCodeKind::True => &Self::TRUE,
+            OpCodeKind::False => &Self::FALSE,
         }
     }
 
@@ -87,6 +93,8 @@ impl OpCodeDef {
     const SUB: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpSub", &[]);
     const MUL: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpMul", &[]);
     const DIV: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpDiv", &[]);
+    const TRUE: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpTrue", &[]);
+    const FALSE: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpFalse", &[]);
 }
 
 impl fmt::Display for OpCodeDef {

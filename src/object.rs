@@ -1,34 +1,56 @@
 use std::ascii;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::Hash;
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, anyhow, bail, ensure};
 
 use crate::ast::{self, FunctionLiteral};
 use crate::eval::EvalError;
 
-pub trait ObjectInterface: Display {
+pub trait ObjectInterface: Display + Send {
     fn get_name(&self) -> String;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Object {
-    Integer(Rc<RefCell<IntegerObject>>),
-    Bool(Rc<RefCell<BoolObject>>),
-    Null(Rc<RefCell<Null>>),
-    Function(Rc<RefCell<Function>>),
-    ReturnValue(Rc<RefCell<ReturnValue>>),
-    String(Rc<RefCell<StringObject>>),
-    Builtin(Rc<RefCell<Builtin>>),
-    Array(Rc<RefCell<Array>>),
-    Hash(Rc<RefCell<HashObject>>),
+    Integer(Arc<RwLock<IntegerObject>>),
+    Bool(Arc<RwLock<BoolObject>>),
+    Null(Arc<RwLock<Null>>),
+    Function(Arc<RwLock<Function>>),
+    ReturnValue(Arc<RwLock<ReturnValue>>),
+    String(Arc<RwLock<StringObject>>),
+    Builtin(Arc<RwLock<Builtin>>),
+    Array(Arc<RwLock<Array>>),
+    Hash(Arc<RwLock<HashObject>>),
 }
 
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Object::Integer(a), Object::Integer(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Object::Bool(a), Object::Bool(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Object::Null(_), Object::Null(_)) => true,
+            (Object::Function(a), Object::Function(b)) => {
+                *a.read().unwrap() == *b.read().unwrap()
+            }
+            (Object::ReturnValue(a), Object::ReturnValue(b)) => {
+                *a.read().unwrap() == *b.read().unwrap()
+            }
+            (Object::String(a), Object::String(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Object::Builtin(a), Object::Builtin(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Object::Array(a), Object::Array(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Object::Hash(a), Object::Hash(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Object {}
+
 impl Object {
-    pub fn as_interface(&self) -> Rc<RefCell<dyn ObjectInterface>> {
+    pub fn as_interface(&self) -> Arc<RwLock<dyn ObjectInterface>> {
         match self {
             Object::Bool(x) => x.clone(),
             Object::Integer(x) => x.clone(),
@@ -43,35 +65,35 @@ impl Object {
     }
 
     pub fn int(val: i64) -> Self {
-        Self::Integer(Rc::new(RefCell::new(IntegerObject::new(val))))
+        Self::Integer(Arc::new(RwLock::new(IntegerObject::new(val))))
     }
 
     pub fn bool(value: bool) -> Self {
-        Self::Bool(Rc::new(RefCell::new(BoolObject::new(value))))
+        Self::Bool(Arc::new(RwLock::new(BoolObject::new(value))))
     }
 
     pub fn null() -> Self {
-        Self::Null(Rc::new(RefCell::new(Null::new())))
+        Self::Null(Arc::new(RwLock::new(Null::new())))
     }
 
     pub fn str(value: &str) -> Self {
-        Self::String(Rc::new(RefCell::new(StringObject::new(value))))
+        Self::String(Arc::new(RwLock::new(StringObject::new(value))))
     }
 
     pub fn builtin(func: BuiltinFunction) -> Self {
-        Self::Builtin(Rc::new(RefCell::new(Builtin::new(func))))
+        Self::Builtin(Arc::new(RwLock::new(Builtin::new(func))))
     }
 
-    pub fn from_func_litereal(literal: &FunctionLiteral, env: Rc<RefCell<Environment>>) -> Self {
-        Self::Function(Rc::new(RefCell::new(Function::new(
+    pub fn from_func_litereal(literal: &FunctionLiteral, env: Arc<RwLock<Environment>>) -> Self {
+        Self::Function(Arc::new(RwLock::new(Function::new(
             &literal.params,
             &literal.body,
             env,
         ))))
     }
 
-    pub fn ret_val(val: Rc<Object>) -> Self {
-        Self::ReturnValue(Rc::new(RefCell::new(ReturnValue::new(val))))
+    pub fn ret_val(val: Arc<Object>) -> Self {
+        Self::ReturnValue(Arc::new(RwLock::new(ReturnValue::new(val))))
     }
 
     pub fn is_returned(&self) -> bool {
@@ -81,13 +103,13 @@ impl Object {
 
 impl ObjectInterface for Object {
     fn get_name(&self) -> String {
-        self.as_interface().borrow().get_name()
+        self.as_interface().read().unwrap().get_name()
     }
 }
 
 impl Display for Object {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_interface().borrow())
+        write!(f, "{}", self.as_interface().read().unwrap())
     }
 }
 
@@ -190,11 +212,11 @@ impl ObjectInterface for StringObject {
 // ReturnValue
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReturnValue {
-    pub value: Rc<Object>,
+    pub value: Arc<Object>,
 }
 
 impl ReturnValue {
-    pub fn new(value: Rc<Object>) -> Self {
+    pub fn new(value: Arc<Object>) -> Self {
         Self { value }
     }
 }
@@ -212,18 +234,28 @@ impl Display for ReturnValue {
 }
 
 // Function
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Function {
     pub params: Vec<ast::Identifier>,
     pub body: ast::BlockStatement,
-    pub parent_env: Rc<RefCell<Environment>>,
+    pub parent_env: Arc<RwLock<Environment>>,
 }
+
+impl PartialEq for Function {
+    fn eq(&self, other: &Self) -> bool {
+        self.params == other.params
+            && self.body == other.body
+            && *self.parent_env.read().unwrap() == *other.parent_env.read().unwrap()
+    }
+}
+
+impl Eq for Function {}
 
 impl Function {
     pub fn new(
         params: &[ast::Identifier],
         body: &ast::BlockStatement,
-        parent_env: Rc<RefCell<Environment>>,
+        parent_env: Arc<RwLock<Environment>>,
     ) -> Self {
         Self {
             params: params.to_vec(),
@@ -232,7 +264,7 @@ impl Function {
         }
     }
 
-    pub fn create_function_env(&self, args: &[Rc<Object>]) -> Result<Rc<RefCell<Environment>>> {
+    pub fn create_function_env(&self, args: &[Arc<Object>]) -> Result<Arc<RwLock<Environment>>> {
         let mut env = Environment::new(Some(self.parent_env.clone()));
 
         ensure!(
@@ -244,7 +276,7 @@ impl Function {
             env.set(param.value.as_str(), args[i].clone());
         }
 
-        Ok(Rc::new(RefCell::new(env)))
+        Ok(Arc::new(RwLock::new(env)))
     }
 }
 
@@ -279,11 +311,11 @@ impl Display for Function {
 // Array
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Array {
-    pub array: Vec<Rc<Object>>,
+    pub array: Vec<Arc<Object>>,
 }
 
 impl Array {
-    pub fn new(array: &[Rc<Object>]) -> Self {
+    pub fn new(array: &[Arc<Object>]) -> Self {
         Self {
             array: array.to_vec(),
         }
@@ -318,15 +350,28 @@ impl Display for Array {
 }
 
 // Hash
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum HashKeyObject {
-    String(Rc<RefCell<StringObject>>),
-    Integer(Rc<RefCell<IntegerObject>>),
-    Bool(Rc<RefCell<BoolObject>>),
+    String(Arc<RwLock<StringObject>>),
+    Integer(Arc<RwLock<IntegerObject>>),
+    Bool(Arc<RwLock<BoolObject>>),
 }
 
+impl PartialEq for HashKeyObject {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::String(a), Self::String(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Self::Integer(a), Self::Integer(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Self::Bool(a), Self::Bool(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for HashKeyObject {}
+
 impl HashKeyObject {
-    pub fn from_object(object: Rc<Object>) -> Result<Self> {
+    pub fn from_object(object: Arc<Object>) -> Result<Self> {
         let s = match &*object {
             Object::String(x) => Self::String(x.clone()),
             Object::Integer(x) => Self::Integer(x.clone()),
@@ -342,18 +387,18 @@ impl HashKeyObject {
     }
 
     pub fn str(value: &str) -> Self {
-        Self::String(Rc::new(RefCell::new(StringObject::new(value))))
+        Self::String(Arc::new(RwLock::new(StringObject::new(value))))
     }
 
     pub fn int(value: i64) -> Self {
-        Self::Integer(Rc::new(RefCell::new(IntegerObject::new(value))))
+        Self::Integer(Arc::new(RwLock::new(IntegerObject::new(value))))
     }
 
     pub fn bool(value: bool) -> Self {
-        Self::Bool(Rc::new(RefCell::new(BoolObject::new(value))))
+        Self::Bool(Arc::new(RwLock::new(BoolObject::new(value))))
     }
 
-    fn as_interface(&self) -> Rc<RefCell<dyn ObjectInterface>> {
+    fn as_interface(&self) -> Arc<RwLock<dyn ObjectInterface>> {
         match self {
             Self::String(x) => x.clone(),
             Self::Integer(x) => x.clone(),
@@ -367,26 +412,26 @@ impl Hash for HashKeyObject {
         std::mem::discriminant(self).hash(state);
 
         match self {
-            Self::String(x) => x.borrow().hash(state),
-            Self::Integer(x) => x.borrow().hash(state),
-            Self::Bool(x) => x.borrow().hash(state),
+            Self::String(x) => x.read().unwrap().hash(state),
+            Self::Integer(x) => x.read().unwrap().hash(state),
+            Self::Bool(x) => x.read().unwrap().hash(state),
         }
     }
 }
 
 impl Display for HashKeyObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_interface().borrow())
+        write!(f, "{}", self.as_interface().read().unwrap())
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashObject {
-    pub pairs: HashMap<HashKeyObject, Rc<Object>>,
+    pub pairs: HashMap<HashKeyObject, Arc<Object>>,
 }
 
 impl HashObject {
-    pub fn new(pairs: HashMap<HashKeyObject, Rc<Object>>) -> Self {
+    pub fn new(pairs: HashMap<HashKeyObject, Arc<Object>>) -> Self {
         Self { pairs }
     }
 }
@@ -414,7 +459,7 @@ impl ObjectInterface for HashObject {
 }
 
 // Builtin
-pub type BuiltinFunction = fn(&[Rc<Object>]) -> Result<Option<Rc<Object>>>;
+pub type BuiltinFunction = fn(&[Arc<Object>]) -> Result<Option<Arc<Object>>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Builtin {
@@ -440,41 +485,56 @@ impl ObjectInterface for Builtin {
 }
 
 // helper constants
-pub fn create_true() -> Rc<Object> {
-    Rc::new(Object::bool(true))
+pub fn create_true() -> Arc<Object> {
+    Arc::new(Object::bool(true))
 }
 
-pub fn create_false() -> Rc<Object> {
-    Rc::new(Object::bool(false))
+pub fn create_false() -> Arc<Object> {
+    Arc::new(Object::bool(false))
 }
 
-pub fn create_null() -> Rc<Object> {
-    Rc::new(Object::null())
+pub fn create_null() -> Arc<Object> {
+    Arc::new(Object::null())
 }
 
 // environment
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Environment {
-    store: HashMap<String, Rc<Object>>,
-    outer: Option<Rc<RefCell<Environment>>>,
+    store: HashMap<String, Arc<Object>>,
+    outer: Option<Arc<RwLock<Environment>>>,
 }
 
+impl PartialEq for Environment {
+    fn eq(&self, other: &Self) -> bool {
+        if self.store != other.store {
+            return false;
+        }
+        match (&self.outer, &other.outer) {
+            (None, None) => true,
+            (Some(a), Some(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Environment {}
+
 impl Environment {
-    pub fn new(outer: Option<Rc<RefCell<Environment>>>) -> Self {
+    pub fn new(outer: Option<Arc<RwLock<Environment>>>) -> Self {
         Self {
             store: HashMap::new(),
             outer,
         }
     }
 
-    pub fn get(&self, name: &str) -> Option<Rc<Object>> {
+    pub fn get(&self, name: &str) -> Option<Arc<Object>> {
         match self.store.get(name) {
             Some(x) => Some(x.clone()),
-            None => self.outer.as_ref()?.borrow().get(name),
+            None => self.outer.as_ref()?.read().unwrap().get(name),
         }
     }
 
-    pub fn set(&mut self, name: &str, val: Rc<Object>) {
+    pub fn set(&mut self, name: &str, val: Arc<Object>) {
         self.store.insert(name.to_string(), val);
     }
 }

@@ -1,7 +1,6 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem::discriminant;
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result, bail, ensure};
 
@@ -46,26 +45,26 @@ pub enum EvalError {
 
 pub fn eval<T: ast::NodeInterface>(
     node: &T,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Option<Rc<object::Object>>> {
-    env.borrow_mut()
-        .set("len", Rc::new(Object::builtin(builtins::len)));
-    env.borrow_mut()
-        .set("first", Rc::new(Object::builtin(builtins::first)));
-    env.borrow_mut()
-        .set("last", Rc::new(Object::builtin(builtins::last)));
-    env.borrow_mut()
-        .set("push", Rc::new(Object::builtin(builtins::push)));
-    env.borrow_mut()
-        .set("puts", Rc::new(Object::builtin(builtins::puts)));
+    env: Arc<RwLock<Environment>>,
+) -> Result<Option<Arc<object::Object>>> {
+    env.write().unwrap()
+        .set("len", Arc::new(Object::builtin(builtins::len)));
+    env.write().unwrap()
+        .set("first", Arc::new(Object::builtin(builtins::first)));
+    env.write().unwrap()
+        .set("last", Arc::new(Object::builtin(builtins::last)));
+    env.write().unwrap()
+        .set("push", Arc::new(Object::builtin(builtins::push)));
+    env.write().unwrap()
+        .set("puts", Arc::new(Object::builtin(builtins::puts)));
 
     __eval(node, env)
 }
 
 fn __eval<T: ast::NodeInterface>(
     node: &T,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Option<Rc<object::Object>>> {
+    env: Arc<RwLock<Environment>>,
+) -> Result<Option<Arc<object::Object>>> {
     match node.get_node() {
         // program
         Node::Program(program) => eval_program(program, env),
@@ -96,7 +95,7 @@ fn __eval<T: ast::NodeInterface>(
                         expr: ret_stmt.value.clone()
                     }),
                 };
-            Ok(Some(Rc::new(Object::ret_val(value))))
+            Ok(Some(Arc::new(Object::ret_val(value))))
         }
         Node::LetStatement(let_stmt) => {
             let value =
@@ -107,7 +106,7 @@ fn __eval<T: ast::NodeInterface>(
                     }),
                 };
 
-            env.borrow_mut().set(let_stmt.name.value.as_str(), value);
+            env.write().unwrap().set(let_stmt.name.value.as_str(), value);
 
             if let_stmt.has_semicolon {
                 Ok(None)
@@ -232,16 +231,16 @@ fn __eval<T: ast::NodeInterface>(
         }
 
         //// literals
-        Node::IntegerLiteral(int_literal) => Ok(Some(Rc::new(Object::int(int_literal.value)))),
-        Node::BoolLiteral(bool_literal) => Ok(Some(Rc::new(Object::bool(bool_literal.value)))),
+        Node::IntegerLiteral(int_literal) => Ok(Some(Arc::new(Object::int(int_literal.value)))),
+        Node::BoolLiteral(bool_literal) => Ok(Some(Arc::new(Object::bool(bool_literal.value)))),
         Node::FunctionLiteral(func_literal) => {
-            Ok(Some(Rc::new(Object::from_func_litereal(func_literal, env))))
+            Ok(Some(Arc::new(Object::from_func_litereal(func_literal, env))))
         }
-        Node::StringLiteral(literal) => Ok(Some(Rc::new(Object::str(&literal.value)))),
+        Node::StringLiteral(literal) => Ok(Some(Arc::new(Object::str(&literal.value)))),
         Node::ArrayLiteral(literal) => {
             let elements = eval_expressions(&literal.elements, env)
                 .context("failed to eval the element list.")?;
-            Ok(Some(Rc::new(Object::Array(Rc::new(RefCell::new(
+            Ok(Some(Arc::new(Object::Array(Arc::new(RwLock::new(
                 object::Array::new(&elements),
             ))))))
         }
@@ -252,8 +251,8 @@ fn __eval<T: ast::NodeInterface>(
 
 fn eval_program(
     program: &ast::Program,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Option<Rc<object::Object>>> {
+    env: Arc<RwLock<Environment>>,
+) -> Result<Option<Arc<object::Object>>> {
     let stmts = &program.statements;
 
     for stmt in stmts.iter() {
@@ -267,8 +266,8 @@ fn eval_program(
 
 fn eval_block_statement(
     block_stmt: &ast::BlockStatement,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Option<Rc<Object>>> {
+    env: Arc<RwLock<Environment>>,
+) -> Result<Option<Arc<Object>>> {
     let stmts = &block_stmt.statements;
 
     for (_, stmt) in stmts.iter().enumerate() {
@@ -281,7 +280,7 @@ fn eval_block_statement(
 }
 
 // prefix
-fn eval_prefix_expression(operator: &str, right: &object::Object) -> Result<Rc<object::Object>> {
+fn eval_prefix_expression(operator: &str, right: &object::Object) -> Result<Arc<object::Object>> {
     match operator {
         "!" => Ok(eval_exclamation_operator_expression(right)),
         "-" => Ok(eval_minus_prefix_operator_expression(right)
@@ -293,10 +292,10 @@ fn eval_prefix_expression(operator: &str, right: &object::Object) -> Result<Rc<o
     }
 }
 
-fn eval_exclamation_operator_expression(right: &object::Object) -> Rc<object::Object> {
+fn eval_exclamation_operator_expression(right: &object::Object) -> Arc<object::Object> {
     match right {
         object::Object::Bool(bool_obj) => {
-            if bool_obj.borrow().value {
+            if bool_obj.read().unwrap().value {
                 create_false()
             } else {
                 create_true()
@@ -307,9 +306,9 @@ fn eval_exclamation_operator_expression(right: &object::Object) -> Rc<object::Ob
     }
 }
 
-fn eval_minus_prefix_operator_expression(right: &object::Object) -> Result<Rc<object::Object>> {
+fn eval_minus_prefix_operator_expression(right: &object::Object) -> Result<Arc<object::Object>> {
     if let object::Object::Integer(int_obj) = right {
-        return Ok(Rc::new(Object::int(-int_obj.borrow().value)));
+        return Ok(Arc::new(Object::int(-int_obj.read().unwrap().value)));
     }
 
     bail!(EvalError::UnknownOperator {
@@ -323,7 +322,7 @@ fn eval_infix_expression(
     operator: &str,
     left: &object::Object,
     right: &object::Object,
-) -> Result<Rc<object::Object>> {
+) -> Result<Arc<object::Object>> {
     ensure!(
         discriminant(left) == discriminant(right),
         EvalError::OperationTypeMismatch {
@@ -334,16 +333,16 @@ fn eval_infix_expression(
     );
 
     match operator {
-        "==" => Ok(Rc::new(Object::bool(*right == *left))),
-        "!=" => Ok(Rc::new(Object::bool(*right != *left))),
+        "==" => Ok(Arc::new(Object::bool(*right == *left))),
+        "!=" => Ok(Arc::new(Object::bool(*right != *left))),
         _ => {
             if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
-                return eval_integer_infix_expression(operator, &x.borrow(), &y.borrow())
+                return eval_integer_infix_expression(operator, &x.read().unwrap(), &y.read().unwrap())
                     .context("failed to eval the integer infix expression.");
             }
 
             if let (Object::String(x), Object::String(y)) = (left, right) {
-                return eval_string_infix_expression(operator, &x.borrow(), &y.borrow())
+                return eval_string_infix_expression(operator, &x.read().unwrap(), &y.read().unwrap())
                     .context("failed to eval the string infix expression.");
             }
 
@@ -359,16 +358,16 @@ fn eval_integer_infix_expression(
     operator: &str,
     left: &object::IntegerObject,
     right: &object::IntegerObject,
-) -> Result<Rc<object::Object>> {
+) -> Result<Arc<object::Object>> {
     match operator {
-        "+" => Ok(Rc::new(Object::int(left.value + right.value))),
-        "-" => Ok(Rc::new(Object::int(left.value - right.value))),
-        "*" => Ok(Rc::new(Object::int(left.value * right.value))),
-        "/" => Ok(Rc::new(Object::int(left.value / right.value))),
-        "<" => Ok(Rc::new(Object::bool(left.value < right.value))),
-        ">" => Ok(Rc::new(Object::bool(left.value > right.value))),
-        "==" => Ok(Rc::new(Object::bool(left.value == right.value))),
-        "!=" => Ok(Rc::new(Object::bool(left.value != right.value))),
+        "+" => Ok(Arc::new(Object::int(left.value + right.value))),
+        "-" => Ok(Arc::new(Object::int(left.value - right.value))),
+        "*" => Ok(Arc::new(Object::int(left.value * right.value))),
+        "/" => Ok(Arc::new(Object::int(left.value / right.value))),
+        "<" => Ok(Arc::new(Object::bool(left.value < right.value))),
+        ">" => Ok(Arc::new(Object::bool(left.value > right.value))),
+        "==" => Ok(Arc::new(Object::bool(left.value == right.value))),
+        "!=" => Ok(Arc::new(Object::bool(left.value != right.value))),
         _ => bail!(EvalError::UnknownOperator {
             operator: operator.to_string(),
             operand_type: left.get_name()
@@ -380,7 +379,7 @@ fn eval_string_infix_expression(
     operator: &str,
     left: &object::StringObject,
     right: &object::StringObject,
-) -> Result<Rc<Object>> {
+) -> Result<Arc<Object>> {
     ensure!(
         operator == "+",
         EvalError::UnknownOperator {
@@ -389,7 +388,7 @@ fn eval_string_infix_expression(
         }
     );
 
-    Ok(Rc::new(Object::str(&format!(
+    Ok(Arc::new(Object::str(&format!(
         "{}{}",
         left.value.as_str(),
         right.value.as_str()
@@ -399,8 +398,8 @@ fn eval_string_infix_expression(
 // if-else
 fn eval_if_expression(
     if_expr: &ast::IfExpression,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Option<Rc<Object>>> {
+    env: Arc<RwLock<Environment>>,
+) -> Result<Option<Arc<Object>>> {
     let condition = match __eval(if_expr.condition.as_ref(), env.clone())
         .context("failed to eval the condition.")?
     {
@@ -429,17 +428,17 @@ fn eval_if_expression(
     Ok(None)
 }
 
-fn is_truethy(obj: Rc<object::Object>) -> bool {
+fn is_truethy(obj: Arc<object::Object>) -> bool {
     match &*obj {
-        Object::Bool(b) => b.borrow().value,
+        Object::Bool(b) => b.read().unwrap().value,
         Object::Null(_) => false,
         _ => true,
     }
 }
 
 // let
-fn eval_identifier(ident: &ast::Identifier, env: Rc<RefCell<Environment>>) -> Result<Rc<Object>> {
-    if let Some(value) = env.borrow().get(ident.value.as_str()) {
+fn eval_identifier(ident: &ast::Identifier, env: Arc<RwLock<Environment>>) -> Result<Arc<Object>> {
+    if let Some(value) = env.read().unwrap().get(ident.value.as_str()) {
         return Ok(value);
     }
 
@@ -449,7 +448,7 @@ fn eval_identifier(ident: &ast::Identifier, env: Rc<RefCell<Environment>>) -> Re
 }
 
 // index expression
-fn eval_index_expression(left: Rc<Object>, index: Rc<Object>) -> Result<Rc<Object>> {
+fn eval_index_expression(left: Arc<Object>, index: Arc<Object>) -> Result<Arc<Object>> {
     match (&*left, &*index) {
         (Object::Array(array), Object::Integer(integer)) => {
             eval_array_index_expression(array.clone(), integer.clone())
@@ -465,10 +464,10 @@ fn eval_index_expression(left: Rc<Object>, index: Rc<Object>) -> Result<Rc<Objec
 }
 
 fn eval_array_index_expression(
-    array: Rc<RefCell<object::Array>>,
-    index: Rc<RefCell<object::IntegerObject>>,
-) -> Result<Rc<Object>> {
-    let value = match array.borrow().array.get(index.borrow().value as usize) {
+    array: Arc<RwLock<object::Array>>,
+    index: Arc<RwLock<object::IntegerObject>>,
+) -> Result<Arc<Object>> {
+    let value = match array.read().unwrap().array.get(index.read().unwrap().value as usize) {
         Some(x) => x.clone(),
         None => create_null(),
     };
@@ -477,12 +476,12 @@ fn eval_array_index_expression(
 }
 
 fn eval_hash_index_expression(
-    hash_obj: Rc<RefCell<HashObject>>,
-    key_obj: Rc<Object>,
-) -> Result<Rc<Object>> {
+    hash_obj: Arc<RwLock<HashObject>>,
+    key_obj: Arc<Object>,
+) -> Result<Arc<Object>> {
     let key = object::HashKeyObject::from_object(key_obj)?;
 
-    let value = match hash_obj.borrow().pairs.get(&key) {
+    let value = match hash_obj.read().unwrap().pairs.get(&key) {
         Some(x) => x.clone(),
         None => create_null(),
     };
@@ -493,8 +492,8 @@ fn eval_hash_index_expression(
 // hash
 fn eval_hash_literal(
     hash_literal: &ast::HashLiteral,
-    env: Rc<RefCell<Environment>>,
-) -> Result<Rc<Object>> {
+    env: Arc<RwLock<Environment>>,
+) -> Result<Arc<Object>> {
     let mut pairs = HashMap::new();
 
     for (i, (key, value)) in hash_literal.pairs.iter().enumerate() {
@@ -517,7 +516,7 @@ fn eval_hash_literal(
         pairs.insert(object::HashKeyObject::from_object(key_obj)?, value_obj);
     }
 
-    Ok(Rc::new(Object::Hash(Rc::new(RefCell::new(
+    Ok(Arc::new(Object::Hash(Arc::new(RwLock::new(
         object::HashObject::new(pairs),
     )))))
 }
@@ -525,8 +524,8 @@ fn eval_hash_literal(
 //
 fn eval_expressions(
     expressions: &[ast::Expression],
-    env: Rc<RefCell<Environment>>,
-) -> Result<Vec<Rc<Object>>> {
+    env: Arc<RwLock<Environment>>,
+) -> Result<Vec<Arc<Object>>> {
     let mut objs = Vec::new();
 
     for (i, expr) in expressions.iter().enumerate() {
@@ -544,37 +543,36 @@ fn eval_expressions(
 }
 
 // related to function
-fn apply_function(f: Rc<Object>, args: &[Rc<Object>]) -> Result<Option<Rc<Object>>> {
+fn apply_function(f: Arc<Object>, args: &[Arc<Object>]) -> Result<Option<Arc<Object>>> {
     match &*f {
         Object::Function(func) => {
             let func_env = func
-                .borrow()
+                .read().unwrap()
                 .create_function_env(args)
                 .context("failed to create the environment.")?;
 
             let evaluated =
-                __eval(&func.borrow().body, func_env).context("failed to eval the body.")?;
+                __eval(&func.read().unwrap().body, func_env).context("failed to eval the body.")?;
 
             Ok(evaluated.map(unwrap_return_value))
         }
         Object::Builtin(builtin) => {
-            (builtin.borrow().func)(args).context("failed to run a builtin function.")
+            (builtin.read().unwrap().func)(args).context("failed to run a builtin function.")
         }
         _ => bail!(EvalError::NotFunction { got: f.get_name() }),
     }
 }
 
-fn unwrap_return_value(obj: Rc<Object>) -> Rc<Object> {
+fn unwrap_return_value(obj: Arc<Object>) -> Arc<Object> {
     match &*obj {
-        Object::ReturnValue(r) => r.borrow().value.clone(),
+        Object::ReturnValue(r) => r.read().unwrap().value.clone(),
         _ => obj,
     }
 }
 
 mod test {
-    use std::cell::RefCell;
     use std::mem::discriminant;
-    use std::rc::Rc;
+    use std::sync::{Arc, RwLock};
 
     use anyhow::{Result, bail};
 
@@ -751,8 +749,8 @@ mod test {
 
             if let Some(obj) = result {
                 let r = match &test.expected.as_ref().unwrap() {
-                    object::Object::Bool(b) => test_bool_object(&obj, b.borrow().value),
-                    object::Object::Integer(i) => test_integer_object(&obj, i.borrow().value),
+                    object::Object::Bool(b) => test_bool_object(&obj, b.read().unwrap().value),
+                    object::Object::Integer(i) => test_integer_object(&obj, i.read().unwrap().value),
                     object::Object::Null(n) => test_null_object(&obj),
                     object::Object::ReturnValue(_) => panic!("program returned ReturnValue."),
                     _ => unimplemented!(),
@@ -852,20 +850,20 @@ mod test {
             panic!("object is not Function. got: {evaluated:?}");
         };
 
-        if fn_obj.borrow().params.len() != 1 {
+        if fn_obj.read().unwrap().params.len() != 1 {
             panic!("number of parameter for function is wrong.");
         }
 
-        if fn_obj.borrow().params[0].to_string().as_str() != "x" {
+        if fn_obj.read().unwrap().params[0].to_string().as_str() != "x" {
             panic!("parameter is not 'x'");
         }
 
         let expected_body = "{(x + 2);}";
 
-        if fn_obj.borrow().body.to_string().as_str() != expected_body {
+        if fn_obj.read().unwrap().body.to_string().as_str() != expected_body {
             panic!(
                 "body is not {expected_body}. got: {}",
-                fn_obj.borrow().body.to_string()
+                fn_obj.read().unwrap().body.to_string()
             );
         }
     }
@@ -941,10 +939,10 @@ mod test {
             panic!("object is not StringLiteral");
         };
 
-        if str_obj.borrow().value.as_str() != "Hello World!" {
+        if str_obj.read().unwrap().value.as_str() != "Hello World!" {
             panic!(
                 "literal.value is not \"Hello World!\". got: {}",
-                str_obj.borrow().value.as_str()
+                str_obj.read().unwrap().value.as_str()
             );
         }
     }
@@ -963,10 +961,10 @@ mod test {
             panic!("object is not StringLiteral");
         };
 
-        if str_obj.borrow().value.as_str() != "Hello World!" {
+        if str_obj.read().unwrap().value.as_str() != "Hello World!" {
             panic!(
                 "literal.value is not \"Hello World!\". got: {}",
-                str_obj.borrow().value.as_str()
+                str_obj.read().unwrap().value.as_str()
             );
         }
     }
@@ -1022,16 +1020,16 @@ mod test {
             panic!("the object is not Array. got: {evaluated:?}",);
         };
 
-        if array.borrow().array.len() != 3 {
+        if array.read().unwrap().array.len() != 3 {
             panic!(
                 "the length of array is not 3. got: {}",
-                array.borrow().array.len()
+                array.read().unwrap().array.len()
             );
         }
 
-        test_integer_object(&array.borrow().array[0], 1);
-        test_integer_object(&array.borrow().array[1], 4);
-        test_integer_object(&array.borrow().array[2], 6);
+        test_integer_object(&array.read().unwrap().array[0], 1);
+        test_integer_object(&array.read().unwrap().array[1], 4);
+        test_integer_object(&array.read().unwrap().array[2], 6);
     }
 
     #[test]
@@ -1048,10 +1046,10 @@ mod test {
             panic!("the object is not Array. got: {evaluated:?}",);
         };
 
-        if array.borrow().array.len() != 0 {
+        if array.read().unwrap().array.len() != 0 {
             panic!(
                 "the length of array is not 0. got: {}",
-                array.borrow().array.len()
+                array.read().unwrap().array.len()
             );
         }
     }
@@ -1098,7 +1096,7 @@ mod test {
 
             match (evaluated, &test.expected) {
                 (Object::Integer(_), Object::Integer(y)) => {
-                    test_integer_object(evaluated, y.borrow().value).unwrap_or_else(|err| {
+                    test_integer_object(evaluated, y.read().unwrap().value).unwrap_or_else(|err| {
                         print_errors(format!("test {} failed.", i).as_str(), err);
                         panic!();
                     })
@@ -1142,7 +1140,7 @@ mod test {
         } else {
             panic!("evaluated is not HashObject. got: {evaluated:?}");
         }
-        .borrow();
+        .read().unwrap();
 
         if expected.len() != hash_obj.pairs.len() {
             panic!(
@@ -1200,7 +1198,7 @@ mod test {
 
             match (evaluated, &test.expected) {
                 (Object::Integer(x), Object::Integer(y)) => {
-                    test_integer_object(evaluated, y.borrow().value).unwrap_or_else(|err| {
+                    test_integer_object(evaluated, y.read().unwrap().value).unwrap_or_else(|err| {
                         print_errors(format!("test {} failed", i).as_str(), err);
                         panic!()
                     })
@@ -1330,7 +1328,7 @@ mod test {
         }
     }
 
-    fn test_eval(input: &str) -> Option<Rc<object::Object>> {
+    fn test_eval(input: &str) -> Option<Arc<object::Object>> {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
         let program = match parser.parse_program() {
@@ -1341,7 +1339,7 @@ mod test {
             }
         };
 
-        let env = Rc::new(RefCell::new(Environment::new(None)));
+        let env = Arc::new(RwLock::new(Environment::new(None)));
 
         eval(&program, env).unwrap_or_else(|e| {
             print_errors("failed to evaluate", e);
@@ -1349,7 +1347,7 @@ mod test {
         })
     }
 
-    fn test_eval_with_error(input: &str) -> Result<Option<Rc<object::Object>>> {
+    fn test_eval_with_error(input: &str) -> Result<Option<Arc<object::Object>>> {
         let mut lexer = Lexer::new(input);
         let mut parser = Parser::new(&mut lexer);
         let program = match parser.parse_program() {
@@ -1360,7 +1358,7 @@ mod test {
             }
         };
 
-        let env = Rc::new(RefCell::new(Environment::new(None)));
+        let env = Arc::new(RwLock::new(Environment::new(None)));
 
         eval(&program, env)
     }
@@ -1372,10 +1370,10 @@ mod test {
             bail!("obj is not Integer. got: {obj:?}");
         };
 
-        if int_obj.borrow().value != expected {
+        if int_obj.read().unwrap().value != expected {
             bail!(
                 "int_obj.value is not {expected}. got: {}",
-                int_obj.borrow().value
+                int_obj.read().unwrap().value
             );
         }
 
@@ -1389,10 +1387,10 @@ mod test {
             bail!("obj is not Bool. got: {obj:?}");
         };
 
-        if bool_obj.borrow().value != expected {
+        if bool_obj.read().unwrap().value != expected {
             bail!(
                 "bool_obj.value is not {expected}. got: {}",
-                bool_obj.borrow().value
+                bool_obj.read().unwrap().value
             );
         }
 
