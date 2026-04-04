@@ -31,6 +31,9 @@ pub enum OpCodeKind {
     Div,
     True,
     False,
+    Equal,
+    NotEqual,
+    GreaterThan,
 }
 
 impl OpCodeKind {
@@ -44,6 +47,9 @@ impl OpCodeKind {
             b if b == Self::Div as u8 => Ok(Self::Div),
             b if b == Self::True as u8 => Ok(Self::True),
             b if b == Self::False as u8 => Ok(Self::False),
+            b if b == Self::Equal as u8 => Ok(Self::Equal),
+            b if b == Self::NotEqual as u8 => Ok(Self::NotEqual),
+            b if b == Self::GreaterThan as u8 => Ok(Self::GreaterThan),
             _ => bail!(CodeError::UnknownOpCodeByte { byte }),
         }
     }
@@ -79,6 +85,9 @@ impl OpCodeDef {
             OpCodeKind::Div => &Self::DIV,
             OpCodeKind::True => &Self::TRUE,
             OpCodeKind::False => &Self::FALSE,
+            OpCodeKind::Equal => &Self::EQUAL,
+            OpCodeKind::NotEqual => &Self::NOT_EQUAL,
+            OpCodeKind::GreaterThan => &Self::GREATER_THAN,
         }
     }
 
@@ -89,12 +98,18 @@ impl OpCodeDef {
 
     const CONSTANT: OpCodeDef = OpCodeDef::new(OpCodeKind::Constant, "OpConstant", &[2]);
     const POP: OpCodeDef = OpCodeDef::new(OpCodeKind::Pop, "OpPop", &[]);
+
     const ADD: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpAdd", &[]);
     const SUB: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpSub", &[]);
     const MUL: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpMul", &[]);
     const DIV: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpDiv", &[]);
+
     const TRUE: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpTrue", &[]);
     const FALSE: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpFalse", &[]);
+
+    const EQUAL: OpCodeDef = OpCodeDef::new(OpCodeKind::Equal, "OpEqual", &[]);
+    const NOT_EQUAL: OpCodeDef = OpCodeDef::new(OpCodeKind::NotEqual, "OpNotEqual", &[]);
+    const GREATER_THAN: OpCodeDef = OpCodeDef::new(OpCodeKind::GreaterThan, "OpGreaterThan", &[]);
 }
 
 impl fmt::Display for OpCodeDef {
@@ -206,40 +221,4 @@ mod test {
             }
         }
     }
-
-    //     #[test]
-    //     fn test_instruction_to_bytes_method() {
-    //         let inst = Instruction::new(OpCodeKind::Constant, &[0xfffe]).unwrap();
-    //         let bytes = inst.to_bytes();
-    //         assert_eq!(bytes, vec![OpCodeKind::Constant as u8, 0xff, 0xfe]);
-    //     }
-
-    //     #[test]
-    //     fn test_instructions_add_method() {
-    //         let mut insts = Instructions::new();
-    //         let pos0 = insts.add_inst(&Instruction::new(OpCodeKind::Constant, &[1]).unwrap());
-    //         let pos1 = insts.add_inst(&Instruction::new(OpCodeKind::Constant, &[2]).unwrap());
-
-    //         assert_eq!(pos0, 0);
-    //         assert_eq!(pos1, 3);
-    //         assert_eq!(insts.len(), 6);
-    //     }
-
-    //     #[test]
-    //     fn test_read_from() {
-    //         let inst = Instruction::new(OpCodeKind::Constant, &[65535]).unwrap();
-    //         let bytes = inst.to_bytes();
-
-    //         let (decoded, bytes_read) = Instruction::read_from(&bytes, 0).unwrap();
-
-    //         assert_eq!(bytes_read, 3);
-    //         assert_eq!(decoded.opcode.opcode_kind, OpCodeKind::Constant);
-    //         assert_eq!(decoded.operands, vec![65535]);
-    //     }
-
-    //     #[test]
-    //     fn test_wrong_operand_count() {
-    //         assert!(Instruction::new(OpCodeKind::Constant, &[]).is_err());
-    //         assert!(Instruction::new(OpCodeKind::Constant, &[1, 2]).is_err());
-    //     }
 }

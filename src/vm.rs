@@ -1,12 +1,12 @@
-use std::sync::LazyLock;
+use std::sync::{self, LazyLock, PoisonError};
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use thiserror::Error;
 
 use crate::code::OpCodeKind;
 use crate::compiler::ByteCode;
-use crate::object::{IntegerObject, Object};
+use crate::object::{BoolObject, IntegerObject, Object};
 use crate::utils::u16_from_be_bytes;
 
 const STACK_SIZE: usize = 2048;
@@ -35,6 +35,16 @@ pub enum RuntimeError {
 
     #[error("unknown types of operands for infix operation. left: {left}, right: {right}.")]
     UnknownOperandsTypesForInfixOperation { left: String, right: String },
+
+    #[error("`{left}` and `{right}` pair is not supported for infix operation `{operation:?}`.")]
+    UnsupportedInfixOperation {
+        left: String,
+        right: String,
+        operation: OpCodeKind,
+    },
+
+    #[error("race error: {msg}")]
+    RaceError { msg: String },
 }
 
 static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
@@ -116,7 +126,7 @@ impl Vm {
                 }
 
                 OpCodeKind::Add | OpCodeKind::Sub | OpCodeKind::Mul | OpCodeKind::Div => {
-                    self.execute_infix_operation(op_kind)
+                    self.execute_binary_operation(op_kind)
                         .context("failed to execute infix operation.")?;
                 }
 
@@ -132,6 +142,11 @@ impl Vm {
                 OpCodeKind::Pop => {
                     self.pop().context("failed to pop from the stack.")?;
                 }
+
+                OpCodeKind::Equal | OpCodeKind::NotEqual | OpCodeKind::GreaterThan => {
+                    self.execute_comparison(op_kind)
+                        .context("failed to execute comparison")?;
+                }
                 _ => unimplemented!(),
             }
         }
@@ -139,13 +154,15 @@ impl Vm {
         Ok(())
     }
 
-    fn execute_infix_operation(&mut self, op_kind: OpCodeKind) -> Result<()> {
+    // 四則演算の実行
+    fn execute_binary_operation(&mut self, op_kind: OpCodeKind) -> Result<()> {
+        // left -> rightの順番でpushされるのでright -> leftの順番でpopする
         let right = self.pop().context("failed to pop the right value.")?;
         let left = self.pop().context("failed to pop the left value.")?;
 
         match (left.as_ref(), right.as_ref()) {
             (Object::Integer(left), Object::Integer(right)) => {
-                self.execute_integer_infix_operation(op_kind, left.clone(), right.clone())
+                self.execute_integer_binary_operation(op_kind, left.clone(), right.clone())
                     .context("failed to execute integer infix operation.")?;
             }
             _ => bail!(RuntimeError::UnknownOperandsTypesForInfixOperation {
@@ -157,7 +174,7 @@ impl Vm {
         Ok(())
     }
 
-    fn execute_integer_infix_operation(
+    fn execute_integer_binary_operation(
         &mut self,
         op_kind: OpCodeKind,
         left: Arc<RwLock<IntegerObject>>,
@@ -173,6 +190,99 @@ impl Vm {
 
         self.push(Arc::new(Object::int(result)))
             .context("failed to push the result value.")?;
+
+        Ok(())
+    }
+
+    // 比較演算の実行
+    fn execute_comparison(&mut self, op_kind: OpCodeKind) -> Result<()> {
+        // left -> rightの順番でpushされるのでright -> leftの順番でpopする
+        let right = self.pop().context("failed to pop the right value.")?;
+        let left = self.pop().context("failed to pop the left value.")?;
+
+        match (left.as_ref(), right.as_ref()) {
+            (Object::Integer(left), Object::Integer(right)) => {
+                self.execute_integer_comparison(op_kind, left.clone(), right.clone())
+                    .context("failed to execute integer comparison.")?;
+            }
+            (Object::Bool(left), Object::Bool(right)) => {
+                self.execute_bool_comparison(op_kind, left.clone(), right.clone())
+                    .context("failed to execute bool comparison.")?;
+            }
+            _ => {
+                bail!(RuntimeError::UnknownOperandsTypesForInfixOperation {
+                    left: left.to_string(),
+                    right: right.to_string()
+                })
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute_integer_comparison(
+        &mut self,
+        op_kind: OpCodeKind,
+        left: Arc<RwLock<IntegerObject>>,
+        right: Arc<RwLock<IntegerObject>>,
+    ) -> Result<()> {
+        let left = left
+            .read()
+            .map_err(|err| RuntimeError::RaceError {
+                msg: err.to_string(),
+            })?
+            .value;
+        let right = right
+            .read()
+            .map_err(|err| RuntimeError::RaceError {
+                msg: err.to_string(),
+            })?
+            .value;
+
+        let result = match op_kind {
+            OpCodeKind::Equal => left == right,
+            OpCodeKind::NotEqual => left != right,
+            OpCodeKind::GreaterThan => left > right,
+            _ => unreachable!(),
+        };
+
+        self.push(Arc::new(Object::bool(result)))
+            .context("failed to push the result value")?;
+
+        Ok(())
+    }
+
+    fn execute_bool_comparison(
+        &mut self,
+        op_kind: OpCodeKind,
+        left: Arc<RwLock<BoolObject>>,
+        right: Arc<RwLock<BoolObject>>,
+    ) -> Result<()> {
+        let left = left
+            .read()
+            .map_err(|err| RuntimeError::RaceError {
+                msg: err.to_string(),
+            })?
+            .value;
+        let right = right
+            .read()
+            .map_err(|err| RuntimeError::RaceError {
+                msg: err.to_string(),
+            })?
+            .value;
+
+        let result = match op_kind {
+            OpCodeKind::Equal => left == right,
+            OpCodeKind::NotEqual => left != right,
+            _ => bail!(RuntimeError::UnsupportedInfixOperation {
+                left: format!("{}", left),
+                right: format!("{}", right),
+                operation: op_kind
+            }),
+        };
+
+        self.push(Arc::new(Object::bool(result)))
+            .context("failed to push the result value")?;
 
         Ok(())
     }
@@ -352,6 +462,23 @@ mod test {
         let tests = [
             VmTestCase::new("true", object::Object::bool(true)),
             VmTestCase::new("false", object::Object::bool(false)),
+            VmTestCase::new("1 < 2", object::Object::bool(true)),
+            VmTestCase::new("1 > 2", object::Object::bool(false)),
+            VmTestCase::new("1 < 1", object::Object::bool(false)),
+            VmTestCase::new("1 > 1", object::Object::bool(false)),
+            VmTestCase::new("1 == 1", object::Object::bool(true)),
+            VmTestCase::new("1 != 1", object::Object::bool(false)),
+            VmTestCase::new("1 == 2", object::Object::bool(false)),
+            VmTestCase::new("1 != 2", object::Object::bool(true)),
+            VmTestCase::new("true == true", object::Object::bool(true)),
+            VmTestCase::new("false == false", object::Object::bool(true)),
+            VmTestCase::new("true == false", object::Object::bool(false)),
+            VmTestCase::new("true != false", object::Object::bool(true)),
+            VmTestCase::new("false != true", object::Object::bool(true)),
+            VmTestCase::new("(1 < 2) == true", object::Object::bool(true)),
+            VmTestCase::new("(1 < 2) == false", object::Object::bool(false)),
+            VmTestCase::new("(1 > 2) == true", object::Object::bool(false)),
+            VmTestCase::new("(1 > 2) == false", object::Object::bool(true)),
         ];
 
         run_vm_tests(&tests);

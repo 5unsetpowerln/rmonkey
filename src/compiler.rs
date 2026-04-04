@@ -125,6 +125,16 @@ impl Compiler {
             },
 
             ast::Node::InfixExpression(infix_expr) => {
+                if infix_expr.operator.as_str() == "<" {
+                    self.compile(infix_expr.right.as_ref())
+                        .context("failed to compile the right expression.")?;
+                    self.compile(infix_expr.left.as_ref())
+                        .context("failed to compile the left expression.")?;
+                    self.add_inst(OpCodeKind::GreaterThan, &[])
+                        .context("failed to add the greater-than instruction.")?;
+                    return Ok(());
+                }
+
                 self.compile(infix_expr.left.as_ref())
                     .context("failed to compile the left expression.")?;
                 self.compile(infix_expr.right.as_ref())
@@ -143,6 +153,15 @@ impl Compiler {
                     "/" => self
                         .add_inst(OpCodeKind::Div, &[])
                         .context("failed to add the div instruction")?,
+                    "==" => self
+                        .add_inst(OpCodeKind::Equal, &[])
+                        .context("failed to add the equal instruction.")?,
+                    "!=" => self
+                        .add_inst(OpCodeKind::NotEqual, &[])
+                        .context("failed to add the not-equal instruction.")?,
+                    ">" => self
+                        .add_inst(OpCodeKind::GreaterThan, &[])
+                        .context("failed to add the greater-than instruction.")?,
                     _ => bail!(CompileError::UnknownOperator {
                         operator: infix_expr.operator.clone()
                     }),
@@ -397,6 +416,66 @@ mod test {
                 &[],
                 &[
                     create_inst(OpCodeKind::False, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "1 > 2",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::GreaterThan, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "1 < 2",
+                &[Object::int(2), Object::int(1)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::GreaterThan, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "1 == 2",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Equal, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "1 != 2",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::NotEqual, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "true == false",
+                &[],
+                &[
+                    create_inst(OpCodeKind::True, &[]).unwrap(),
+                    create_inst(OpCodeKind::False, &[]).unwrap(),
+                    create_inst(OpCodeKind::Equal, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "true != false",
+                &[],
+                &[
+                    create_inst(OpCodeKind::True, &[]).unwrap(),
+                    create_inst(OpCodeKind::False, &[]).unwrap(),
+                    create_inst(OpCodeKind::NotEqual, &[]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
