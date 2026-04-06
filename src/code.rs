@@ -37,6 +37,8 @@ pub enum OpCodeKind {
     GreaterThan,
     Minus,
     Bang,
+    JumpNotTruthy,
+    Jump,
 }
 
 #[derive(Debug)]
@@ -74,6 +76,8 @@ impl OpCodeDef {
             OpCodeKind::GreaterThan => &Self::GREATER_THAN,
             OpCodeKind::Minus => &Self::MINUS,
             OpCodeKind::Bang => &Self::BANG,
+            OpCodeKind::Jump => &Self::JUMP,
+            OpCodeKind::JumpNotTruthy => &Self::JUMP_NOT_TRUTHY,
         }
     }
 
@@ -99,6 +103,9 @@ impl OpCodeDef {
 
     const MINUS: OpCodeDef = OpCodeDef::new(OpCodeKind::Minus, "OpMinus", &[]);
     const BANG: OpCodeDef = OpCodeDef::new(OpCodeKind::Bang, "OpBang", &[]);
+    const JUMP_NOT_TRUTHY: OpCodeDef =
+        OpCodeDef::new(OpCodeKind::JumpNotTruthy, "OpJumpNotTruthy", &[2]);
+    const JUMP: OpCodeDef = OpCodeDef::new(OpCodeKind::Jump, "OpJump", &[2]);
 }
 
 impl fmt::Display for OpCodeDef {

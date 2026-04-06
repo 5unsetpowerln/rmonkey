@@ -1,3 +1,4 @@
+use std::mem;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -31,22 +32,63 @@ impl ByteCode {
 #[derive(Debug)]
 pub struct Compiler {
     bytecode: ByteCode,
+    last_inst: Option<AddedInstruction>, // 最近追加された命令
+    prev_inst: Option<AddedInstruction>, // その前に追加された命令
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Self {
             bytecode: ByteCode::new(),
+            last_inst: None,
+            prev_inst: None,
         }
     }
 
-    fn add_inst(&mut self, kind: OpCodeKind, operands: &[i64]) -> Result<()> {
+    fn add_inst(&mut self, kind: OpCodeKind, operands: &[i64]) -> Result<usize> {
+        let position = self.bytecode.instructions.len();
+
         self.bytecode.instructions.extend_from_slice(
             create_inst(kind, operands)
                 .context("failed to create an instruction")?
                 .as_ref(),
         );
 
+        self.set_last_inst(kind, position);
+
+        Ok(position)
+    }
+
+    fn set_last_inst(&mut self, kind: OpCodeKind, position: usize) {
+        mem::swap(&mut self.last_inst, &mut self.prev_inst);
+        self.last_inst = Some(AddedInstruction::new(kind, position));
+    }
+
+    fn last_inst_is(&self, kind: OpCodeKind) -> bool {
+        matches!(&self.last_inst, Some(kind))
+    }
+
+    fn remove_last_inst(&mut self) {
+        self.bytecode
+            .instructions
+            .truncate(self.last_inst.as_ref().unwrap().position);
+        mem::swap(&mut self.last_inst, &mut self.prev_inst);
+        self.prev_inst = None;
+    }
+
+    fn replace_inst(&mut self, position: usize, inst: &[u8]) {
+        self.bytecode
+            .instructions
+            .get_mut(position..position + inst.len())
+            .unwrap()
+            .copy_from_slice(inst);
+    }
+
+    fn change_operands(&mut self, position: usize, operands: &[i64]) -> Result<()> {
+        let kind = OpCodeKind::from_u8(self.bytecode.instructions[position])
+            .context("failed to parse a byte as OpCodeKind.")?;
+        let new_inst = create_inst(kind, operands).context("failed to create new instruction.")?;
+        self.replace_inst(position, new_inst.as_ref());
         Ok(())
     }
 
@@ -139,7 +181,7 @@ impl Compiler {
                     _ => bail!(CompileError::UnknownOperator {
                         operator: prefix_expr.operator.clone()
                     }),
-                }
+                };
             }
 
             ast::Node::InfixExpression(infix_expr) => {
@@ -186,6 +228,59 @@ impl Compiler {
                 };
             }
 
+            ast::Node::IfExpression(if_expr) => {
+                // condition
+                self.compile(if_expr.condition.as_ref())
+                    .context("failed to compile the condition.")?;
+
+                // jump-not-truthy to alternative
+                let jump_not_truthy_pos = self
+                    .add_inst(OpCodeKind::JumpNotTruthy, &[9999])
+                    .context("failed to add the jump-not-truthy instruction.")?;
+
+                // consequence
+                self.compile(&if_expr.consequence)
+                    .context("failed to compile the consequence block.")?;
+                if self.last_inst_is(OpCodeKind::Pop) {
+                    self.remove_last_inst();
+                }
+
+                if let Some(alternative) = if_expr.alternative.as_ref() {
+                    // jump to "after alternative"
+                    let jump_pos = self
+                        .add_inst(OpCodeKind::Jump, &[9999])
+                        .context("failed to add the jump instruction.")?;
+
+                    let alternative_pos = self.bytecode.instructions.len();
+                    self.change_operands(jump_not_truthy_pos, &[alternative_pos as i64])
+                        .context("failed to change operands of the jump-not-truthy instruction.")?;
+
+                    // alternative
+                    self.compile(alternative)
+                        .context("failed to copile the alternative block.")?;
+                    if self.last_inst_is(OpCodeKind::Pop) {
+                        self.remove_last_inst();
+                    }
+
+                    let after_alternative_pos = self.bytecode.instructions.len();
+                    self.change_operands(jump_pos, &[after_alternative_pos as i64])
+                        .context("failed to change operands of the jump instruction.")?;
+                } else {
+                    let after_consequence_pos = self.bytecode.instructions.len();
+                    self.change_operands(jump_not_truthy_pos, &[after_consequence_pos as i64])
+                        .context(
+                            "failed to change the operands of the jump-not-truthy instruction.",
+                        )?;
+                }
+            }
+
+            ast::Node::BlockStatement(block_stmt) => {
+                for stmt in block_stmt.statements.iter() {
+                    self.compile(stmt)
+                        .context("failed to compile a statement")?;
+                }
+            }
+
             ast::Node::IntegerLiteral(int_literal) => {
                 let int_obj = object::Object::int(int_literal.value);
 
@@ -214,6 +309,18 @@ impl Compiler {
 
     pub fn get_bytecode(&self) -> &ByteCode {
         &self.bytecode
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AddedInstruction {
+    kind: OpCodeKind,
+    position: usize,
+}
+
+impl AddedInstruction {
+    pub const fn new(kind: OpCodeKind, position: usize) -> Self {
+        Self { kind, position }
     }
 }
 
@@ -514,6 +621,46 @@ mod test {
                     create_inst(OpCodeKind::True, &[]).unwrap(),
                     create_inst(OpCodeKind::False, &[]).unwrap(),
                     create_inst(OpCodeKind::NotEqual, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_conditionals() {
+        let tests = [
+            CompilerTestCase::new(
+                "if (true) { 10 }; 3333;",
+                &[Object::int(10), Object::int(3333)],
+                &[
+                    // 0
+                    create_inst(OpCodeKind::True, &[]).unwrap(),
+                    // 1
+                    create_inst(OpCodeKind::JumpNotTruthy, &[7]).unwrap(),
+                    // 4
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    // 7
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                    // 8
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    // 11
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "if (true) { 10 } else { 20 }; 3333;",
+                &[Object::int(10), Object::int(20), Object::int(3333)],
+                &[
+                    create_inst(OpCodeKind::True, &[]).unwrap(),
+                    create_inst(OpCodeKind::JumpNotTruthy, &[10]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Jump, &[13]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
