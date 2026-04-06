@@ -36,6 +36,9 @@ pub enum RuntimeError {
     #[error("unknown types of operands for infix operation. left: {left}, right: {right}.")]
     UnknownOperandsTypesForInfixOperation { left: String, right: String },
 
+    #[error("unknown type of operand for prefix operation. left: {left}, operator: {operator}.")]
+    UnknownOperandTypeForPrefixOperation { left: String, operator: String },
+
     #[error("`{left}` and `{right}` pair is not supported for infix operation `{operation:?}`.")]
     UnsupportedInfixOperation {
         left: String,
@@ -125,11 +128,18 @@ impl Vm {
                         .context("failed to push the constant.")?;
                 }
 
+                // infix expressions
                 OpCodeKind::Add | OpCodeKind::Sub | OpCodeKind::Mul | OpCodeKind::Div => {
                     self.execute_binary_operation(op_kind)
                         .context("failed to execute infix operation.")?;
                 }
 
+                OpCodeKind::Equal | OpCodeKind::NotEqual | OpCodeKind::GreaterThan => {
+                    self.execute_comparison(op_kind)
+                        .context("failed to execute comparison")?;
+                }
+
+                // bool
                 OpCodeKind::True => {
                     self.push(TRUE.clone()).context("failed to push `true`.")?;
                 }
@@ -139,14 +149,56 @@ impl Vm {
                         .context("failed to push `false`.")?;
                 }
 
+                // pop
                 OpCodeKind::Pop => {
                     self.pop().context("failed to pop from the stack.")?;
                 }
 
-                OpCodeKind::Equal | OpCodeKind::NotEqual | OpCodeKind::GreaterThan => {
-                    self.execute_comparison(op_kind)
-                        .context("failed to execute comparison")?;
+                // prefix expressions
+                OpCodeKind::Bang => {
+                    let left = self.pop().context("failed to pop the left value.")?;
+
+                    if let Object::Bool(bool_obj) = left.as_ref() {
+                        let left = bool_obj
+                            .read()
+                            .map_err(|err| RuntimeError::RaceError {
+                                msg: err.to_string(),
+                            })
+                            .context("failed to read the left value.")?;
+
+                        let result = !left.value;
+
+                        self.push(Arc::new(Object::bool(result)))
+                            .context("failed to push the result.")?;
+                    } else {
+                        self.push(Arc::new(Object::bool(false)))
+                            .context("failed to push the result.")?;
+                    }
                 }
+
+                OpCodeKind::Minus => {
+                    let left = self.pop().context("failed to pop the left value.")?;
+
+                    if let Object::Integer(int_obj) = left.as_ref() {
+                        let left = int_obj
+                            .read()
+                            .map_err(|err| RuntimeError::RaceError {
+                                msg: err.to_string(),
+                            })
+                            .context("failed to read the left value.")?;
+
+                        let result = -left.value;
+
+                        self.push(Arc::new(Object::int(result)))
+                            .context("failed to push the result.")?;
+                    } else {
+                        bail!(RuntimeError::UnknownOperandTypeForPrefixOperation {
+                            left: left.to_string(),
+                            operator: "-".to_string()
+                        });
+                    }
+                }
+
                 _ => unimplemented!(),
             }
         }
@@ -453,6 +505,10 @@ mod test {
             VmTestCase::new("5 * 2 + 10", object::Object::int(20)),
             VmTestCase::new("5 + 2 * 10", object::Object::int(25)),
             VmTestCase::new("5 * (2 + 10)", object::Object::int(60)),
+            VmTestCase::new("-5", object::Object::int(-5)),
+            VmTestCase::new("-10", object::Object::int(-10)),
+            VmTestCase::new("-50 + 100 + -50", object::Object::int(0)),
+            VmTestCase::new("(5 + 10 * 2 + 15 / 3) * 2 + -10", object::Object::int(50)),
         ];
         run_vm_tests(&tests)
     }
@@ -479,6 +535,12 @@ mod test {
             VmTestCase::new("(1 < 2) == false", object::Object::bool(false)),
             VmTestCase::new("(1 > 2) == true", object::Object::bool(false)),
             VmTestCase::new("(1 > 2) == false", object::Object::bool(true)),
+            VmTestCase::new("!true", object::Object::bool(false)),
+            VmTestCase::new("!false", object::Object::bool(true)),
+            VmTestCase::new("!5", object::Object::bool(false)),
+            VmTestCase::new("!!true", object::Object::bool(true)),
+            VmTestCase::new("!!false", object::Object::bool(false)),
+            VmTestCase::new("!!5", object::Object::bool(true)),
         ];
 
         run_vm_tests(&tests);

@@ -8,6 +8,7 @@ anyhow = "1.0.100"
 clap = { version = "4.5.60", features = ["derive"] }
 log = "0.4.29"
 thiserror = "2.0.18"
+derive-from-u8 = { path = "./derive-from-u8" }
 
 [lints.clippy]
 uninlined_format_args = "allow"

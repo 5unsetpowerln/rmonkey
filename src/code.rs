@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail, ensure};
+use derive_from_u8::FromU8;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -20,7 +21,7 @@ pub enum CodeError {
     UnknownOpCodeByte { byte: u8 },
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, FromU8)]
 #[repr(u8)]
 pub enum OpCodeKind {
     Constant,
@@ -34,25 +35,8 @@ pub enum OpCodeKind {
     Equal,
     NotEqual,
     GreaterThan,
-}
-
-impl OpCodeKind {
-    pub fn from_u8(byte: u8) -> Result<Self> {
-        match byte {
-            b if b == Self::Constant as u8 => Ok(Self::Constant),
-            b if b == Self::Pop as u8 => Ok(Self::Pop),
-            b if b == Self::Add as u8 => Ok(Self::Add),
-            b if b == Self::Sub as u8 => Ok(Self::Sub),
-            b if b == Self::Mul as u8 => Ok(Self::Mul),
-            b if b == Self::Div as u8 => Ok(Self::Div),
-            b if b == Self::True as u8 => Ok(Self::True),
-            b if b == Self::False as u8 => Ok(Self::False),
-            b if b == Self::Equal as u8 => Ok(Self::Equal),
-            b if b == Self::NotEqual as u8 => Ok(Self::NotEqual),
-            b if b == Self::GreaterThan as u8 => Ok(Self::GreaterThan),
-            _ => bail!(CodeError::UnknownOpCodeByte { byte }),
-        }
-    }
+    Minus,
+    Bang,
 }
 
 #[derive(Debug)]
@@ -88,6 +72,8 @@ impl OpCodeDef {
             OpCodeKind::Equal => &Self::EQUAL,
             OpCodeKind::NotEqual => &Self::NOT_EQUAL,
             OpCodeKind::GreaterThan => &Self::GREATER_THAN,
+            OpCodeKind::Minus => &Self::MINUS,
+            OpCodeKind::Bang => &Self::BANG,
         }
     }
 
@@ -110,6 +96,9 @@ impl OpCodeDef {
     const EQUAL: OpCodeDef = OpCodeDef::new(OpCodeKind::Equal, "OpEqual", &[]);
     const NOT_EQUAL: OpCodeDef = OpCodeDef::new(OpCodeKind::NotEqual, "OpNotEqual", &[]);
     const GREATER_THAN: OpCodeDef = OpCodeDef::new(OpCodeKind::GreaterThan, "OpGreaterThan", &[]);
+
+    const MINUS: OpCodeDef = OpCodeDef::new(OpCodeKind::Minus, "OpMinus", &[]);
+    const BANG: OpCodeDef = OpCodeDef::new(OpCodeKind::Bang, "OpBang", &[]);
 }
 
 impl fmt::Display for OpCodeDef {

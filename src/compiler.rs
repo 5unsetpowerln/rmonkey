@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use thiserror::Error;
 
+use crate::ast::PrefixExpression;
 use crate::code::{OpCodeKind, create_inst};
 use crate::{ast, object};
 
@@ -123,6 +124,23 @@ impl Compiler {
                     .compile(x)
                     .context("failed to compile the integer literal.")?,
             },
+
+            ast::Node::PrefixExpression(prefix_expr) => {
+                self.compile(prefix_expr.right.as_ref())
+                    .context("failed to compile the left expression.")?;
+
+                match prefix_expr.operator.as_str() {
+                    "-" => self
+                        .add_inst(OpCodeKind::Minus, &[])
+                        .context("failed to compile the minus operator.")?,
+                    "!" => self
+                        .add_inst(OpCodeKind::Bang, &[])
+                        .context("failed to compile the bang operator.")?,
+                    _ => bail!(CompileError::UnknownOperator {
+                        operator: prefix_expr.operator.clone()
+                    }),
+                }
+            }
 
             ast::Node::InfixExpression(infix_expr) => {
                 if infix_expr.operator.as_str() == "<" {
@@ -279,9 +297,11 @@ mod test {
     fn test_insts(expected: &[u8], actual: &[u8]) -> Result<()> {
         if expected.len() != actual.len() {
             bail!(
-                "wrong instructions length.\nexpected:\n{}got:\n{}",
+                "wrong instructions length.\nexpected: {} got: {}\nexpected insts: {}\nactual insts: {}",
                 expected.len(),
                 actual.len(),
+                disasm(expected),
+                disasm(actual)
             );
         }
 
@@ -392,6 +412,24 @@ mod test {
                     create_inst(OpCodeKind::Constant, &[0]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "-1",
+                &[Object::int(1)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Minus, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "!true",
+                &[],
+                &[
+                    create_inst(OpCodeKind::True, &[]).unwrap(),
+                    create_inst(OpCodeKind::Bang, &[]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
