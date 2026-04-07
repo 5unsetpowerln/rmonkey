@@ -47,15 +47,20 @@ pub fn eval<T: ast::NodeInterface>(
     node: &T,
     env: Arc<RwLock<Environment>>,
 ) -> Result<Option<Arc<object::Object>>> {
-    env.write().unwrap()
+    env.write()
+        .unwrap()
         .set("len", Arc::new(Object::builtin(builtins::len)));
-    env.write().unwrap()
+    env.write()
+        .unwrap()
         .set("first", Arc::new(Object::builtin(builtins::first)));
-    env.write().unwrap()
+    env.write()
+        .unwrap()
         .set("last", Arc::new(Object::builtin(builtins::last)));
-    env.write().unwrap()
+    env.write()
+        .unwrap()
         .set("push", Arc::new(Object::builtin(builtins::push)));
-    env.write().unwrap()
+    env.write()
+        .unwrap()
         .set("puts", Arc::new(Object::builtin(builtins::puts)));
 
     __eval(node, env)
@@ -106,7 +111,9 @@ fn __eval<T: ast::NodeInterface>(
                     }),
                 };
 
-            env.write().unwrap().set(let_stmt.name.value.as_str(), value);
+            env.write()
+                .unwrap()
+                .set(let_stmt.name.value.as_str(), value);
 
             if let_stmt.has_semicolon {
                 Ok(None)
@@ -233,9 +240,10 @@ fn __eval<T: ast::NodeInterface>(
         //// literals
         Node::IntegerLiteral(int_literal) => Ok(Some(Arc::new(Object::int(int_literal.value)))),
         Node::BoolLiteral(bool_literal) => Ok(Some(Arc::new(Object::bool(bool_literal.value)))),
-        Node::FunctionLiteral(func_literal) => {
-            Ok(Some(Arc::new(Object::from_func_litereal(func_literal, env))))
-        }
+        Node::FunctionLiteral(func_literal) => Ok(Some(Arc::new(Object::from_func_litereal(
+            func_literal,
+            env,
+        )))),
         Node::StringLiteral(literal) => Ok(Some(Arc::new(Object::str(&literal.value)))),
         Node::ArrayLiteral(literal) => {
             let elements = eval_expressions(&literal.elements, env)
@@ -337,13 +345,21 @@ fn eval_infix_expression(
         "!=" => Ok(Arc::new(Object::bool(*right != *left))),
         _ => {
             if let (object::Object::Integer(x), object::Object::Integer(y)) = (left, right) {
-                return eval_integer_infix_expression(operator, &x.read().unwrap(), &y.read().unwrap())
-                    .context("failed to eval the integer infix expression.");
+                return eval_integer_infix_expression(
+                    operator,
+                    &x.read().unwrap(),
+                    &y.read().unwrap(),
+                )
+                .context("failed to eval the integer infix expression.");
             }
 
             if let (Object::String(x), Object::String(y)) = (left, right) {
-                return eval_string_infix_expression(operator, &x.read().unwrap(), &y.read().unwrap())
-                    .context("failed to eval the string infix expression.");
+                return eval_string_infix_expression(
+                    operator,
+                    &x.read().unwrap(),
+                    &y.read().unwrap(),
+                )
+                .context("failed to eval the string infix expression.");
             }
 
             bail!(EvalError::UnknownOperator {
@@ -410,7 +426,7 @@ fn eval_if_expression(
     };
 
     if let Some(alternative) = &if_expr.alternative {
-        if is_truethy(condition) {
+        if condition.is_truthy() {
             return __eval(&if_expr.consequence, env)
                 .context("failed to eval the consequence block.");
         } else {
@@ -418,7 +434,7 @@ fn eval_if_expression(
         }
     }
 
-    if is_truethy(condition) {
+    if condition.is_truthy() {
         match __eval(&if_expr.consequence, env).context("failed to eval the consequence block.")? {
             Some(value) if value.is_returned() => return Ok(Some(value)),
             _ => (),
@@ -426,14 +442,6 @@ fn eval_if_expression(
     }
 
     Ok(None)
-}
-
-fn is_truethy(obj: Arc<object::Object>) -> bool {
-    match &*obj {
-        Object::Bool(b) => b.read().unwrap().value,
-        Object::Null(_) => false,
-        _ => true,
-    }
 }
 
 // let
@@ -467,7 +475,12 @@ fn eval_array_index_expression(
     array: Arc<RwLock<object::Array>>,
     index: Arc<RwLock<object::IntegerObject>>,
 ) -> Result<Arc<Object>> {
-    let value = match array.read().unwrap().array.get(index.read().unwrap().value as usize) {
+    let value = match array
+        .read()
+        .unwrap()
+        .array
+        .get(index.read().unwrap().value as usize)
+    {
         Some(x) => x.clone(),
         None => create_null(),
     };
@@ -547,7 +560,8 @@ fn apply_function(f: Arc<Object>, args: &[Arc<Object>]) -> Result<Option<Arc<Obj
     match &*f {
         Object::Function(func) => {
             let func_env = func
-                .read().unwrap()
+                .read()
+                .unwrap()
                 .create_function_env(args)
                 .context("failed to create the environment.")?;
 
@@ -750,7 +764,9 @@ mod test {
             if let Some(obj) = result {
                 let r = match &test.expected.as_ref().unwrap() {
                     object::Object::Bool(b) => test_bool_object(&obj, b.read().unwrap().value),
-                    object::Object::Integer(i) => test_integer_object(&obj, i.read().unwrap().value),
+                    object::Object::Integer(i) => {
+                        test_integer_object(&obj, i.read().unwrap().value)
+                    }
                     object::Object::Null(n) => test_null_object(&obj),
                     object::Object::ReturnValue(_) => panic!("program returned ReturnValue."),
                     _ => unimplemented!(),
@@ -1140,7 +1156,8 @@ mod test {
         } else {
             panic!("evaluated is not HashObject. got: {evaluated:?}");
         }
-        .read().unwrap();
+        .read()
+        .unwrap();
 
         if expected.len() != hash_obj.pairs.len() {
             panic!(

@@ -76,6 +76,17 @@ impl Vm {
         }
     }
 
+    fn read_n(&self, pos: usize, n: usize) -> Result<&[u8]> {
+        if let Some(x) = self.instructions.get(pos..pos + 2) {
+            Ok(x)
+        } else {
+            bail!(RuntimeError::InstructionPointerOverflow {
+                inst_length: self.instructions.len(),
+                inst_pointer: pos + 2
+            });
+        }
+    }
+
     pub fn run(&mut self) -> Result<()> {
         let mut ip = 0;
 
@@ -101,14 +112,7 @@ impl Vm {
             match op_kind {
                 OpCodeKind::Constant => {
                     // 定数配列のインデックスを取得する
-                    let raw_operands = if let Some(x) = self.instructions.get(ip..ip + 2) {
-                        x
-                    } else {
-                        bail!(RuntimeError::InstructionPointerOverflow {
-                            inst_length: self.instructions.len(),
-                            inst_pointer: ip + 2
-                        });
-                    };
+                    let raw_operands = self.read_n(ip, 2)?;
 
                     //// 上の処理で幅が2であることは確定済みなのでunwrapしても良い
                     let const_idx = u16_from_be_bytes(raw_operands).unwrap() as usize;
@@ -196,6 +200,27 @@ impl Vm {
                             left: left.to_string(),
                             operator: "-".to_string()
                         });
+                    }
+                }
+
+                OpCodeKind::Jump => {
+                    let raw_operands = self.read_n(ip, 2)?;
+
+                    let pos = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    ip = pos;
+                }
+
+                OpCodeKind::JumpNotTruthy => {
+                    let raw_operands = self.read_n(ip, 2)?;
+
+                    let pos = u16_from_be_bytes(raw_operands).unwrap() as usize;
+
+                    let condition = self.pop().context("failed to pop the condition.")?;
+                    if !condition.is_truthy() {
+                        ip = pos;
+                    } else {
+                        // posを読んだ分
+                        ip += 2;
                     }
                 }
 
@@ -541,6 +566,21 @@ mod test {
             VmTestCase::new("!!true", object::Object::bool(true)),
             VmTestCase::new("!!false", object::Object::bool(false)),
             VmTestCase::new("!!5", object::Object::bool(true)),
+        ];
+
+        run_vm_tests(&tests);
+    }
+
+    #[test]
+    fn test_conditionals() {
+        let tests = [
+            VmTestCase::new("if (true) { 10 }", object::Object::int(10)),
+            VmTestCase::new("if (true) { 10 } else { 20 }", object::Object::int(10)),
+            VmTestCase::new("if (false) { 10 } else { 20 }", object::Object::int(20)),
+            VmTestCase::new("if (1) { 10 }", object::Object::int(10)),
+            VmTestCase::new("if (1 < 2) { 10 }", object::Object::int(10)),
+            VmTestCase::new("if (1 < 2) { 10 } else { 20 }", object::Object::int(10)),
+            VmTestCase::new("if (1 > 2) { 10 } else { 20 }", object::Object::int(20)),
         ];
 
         run_vm_tests(&tests);

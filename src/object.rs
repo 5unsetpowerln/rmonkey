@@ -32,9 +32,7 @@ impl PartialEq for Object {
             (Object::Integer(a), Object::Integer(b)) => *a.read().unwrap() == *b.read().unwrap(),
             (Object::Bool(a), Object::Bool(b)) => *a.read().unwrap() == *b.read().unwrap(),
             (Object::Null(_), Object::Null(_)) => true,
-            (Object::Function(a), Object::Function(b)) => {
-                *a.read().unwrap() == *b.read().unwrap()
-            }
+            (Object::Function(a), Object::Function(b)) => *a.read().unwrap() == *b.read().unwrap(),
             (Object::ReturnValue(a), Object::ReturnValue(b)) => {
                 *a.read().unwrap() == *b.read().unwrap()
             }
@@ -98,6 +96,14 @@ impl Object {
 
     pub fn is_returned(&self) -> bool {
         matches!(self, Self::ReturnValue(_))
+    }
+
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            Object::Bool(b) => b.read().unwrap().value,
+            Object::Null(_) => false,
+            _ => true,
+        }
     }
 }
 
