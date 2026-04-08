@@ -52,6 +52,7 @@ pub enum RuntimeError {
 
 static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
 static FALSE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(false)));
+static NULL: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::null()));
 
 pub struct Vm {
     constants: Vec<Arc<Object>>,
@@ -153,6 +154,11 @@ impl Vm {
                         .context("failed to push `false`.")?;
                 }
 
+                // null
+                OpCodeKind::Null => {
+                    self.push(NULL.clone()).context("failed to push `null`.")?;
+                }
+
                 // pop
                 OpCodeKind::Pop => {
                     self.pop().context("failed to pop from the stack.")?;
@@ -162,21 +168,28 @@ impl Vm {
                 OpCodeKind::Bang => {
                     let left = self.pop().context("failed to pop the left value.")?;
 
-                    if let Object::Bool(bool_obj) = left.as_ref() {
-                        let left = bool_obj
-                            .read()
-                            .map_err(|err| RuntimeError::RaceError {
-                                msg: err.to_string(),
-                            })
-                            .context("failed to read the left value.")?;
+                    match left.as_ref() {
+                        Object::Bool(bool_obj) => {
+                            let left = bool_obj
+                                .read()
+                                .map_err(|err| RuntimeError::RaceError {
+                                    msg: err.to_string(),
+                                })
+                                .context("failed to read the left value.")?;
 
-                        let result = !left.value;
+                            let result = !left.value;
 
-                        self.push(Arc::new(Object::bool(result)))
-                            .context("failed to push the result.")?;
-                    } else {
-                        self.push(Arc::new(Object::bool(false)))
-                            .context("failed to push the result.")?;
+                            self.push(Arc::new(Object::bool(result)))
+                                .context("failed to push the result.")?;
+                        }
+                        Object::Null(_) => {
+                            self.push(Arc::new(Object::bool(true)))
+                                .context("failed to push the result.")?;
+                        }
+                        _ => {
+                            self.push(Arc::new(Object::bool(false)))
+                                .context("failed to push the result.")?;
+                        }
                     }
                 }
 
@@ -452,18 +465,20 @@ mod test {
     }
 
     fn run_vm_tests(tests: &[VmTestCase]) -> Result<()> {
-        for test in tests.iter() {
-            let program = parse(test.input).context("failed to parse an input.")?;
+        for (i, test) in tests.iter().enumerate() {
+            let program = parse(test.input)
+                .with_context(|| format!("test {} failed. failed to parse an input.", i))?;
 
             let mut compiler = Compiler::new();
 
             compiler
                 .compile(&program)
-                .context("failed to compile a program.")?;
+                .with_context(|| format!("test {} failed. failed to compile a program.", i))?;
 
             let bytecode = compiler.get_bytecode();
             let mut vm = Vm::new(bytecode);
-            vm.run().context("failed to run a bytecode.")?;
+            vm.run()
+                .with_context(|| format!("test {} failed. failed to run a bytecode.", i))?;
 
             let last_stack_top = vm.last_stack_top();
             test_expected_object(&test.expected, last_stack_top)?;
@@ -493,6 +508,7 @@ mod test {
                     )
                 }
             }
+
             (object::Object::Bool(expected), object::Object::Bool(actual)) => {
                 let expected = expected.read().unwrap().value;
                 let actual = actual.read().unwrap().value;
@@ -504,6 +520,9 @@ mod test {
                     )
                 }
             }
+
+            (object::Object::Null(_), object::Object::Null(_)) => {}
+
             _ => {
                 return Err(anyhow::anyhow!(
                     "unsupported objects: {} and {}",
@@ -516,7 +535,7 @@ mod test {
     }
 
     #[test]
-    fn test_integer_arithmetic() -> Result<()> {
+    fn test_integer_arithmetic() {
         let tests = [
             VmTestCase::new("1", object::Object::int(1)),
             VmTestCase::new("2", object::Object::int(2)),
@@ -535,7 +554,7 @@ mod test {
             VmTestCase::new("-50 + 100 + -50", object::Object::int(0)),
             VmTestCase::new("(5 + 10 * 2 + 15 / 3) * 2 + -10", object::Object::int(50)),
         ];
-        run_vm_tests(&tests)
+        run_vm_tests(&tests).expect("a vm test failed.");
     }
 
     #[test]
@@ -566,9 +585,10 @@ mod test {
             VmTestCase::new("!!true", object::Object::bool(true)),
             VmTestCase::new("!!false", object::Object::bool(false)),
             VmTestCase::new("!!5", object::Object::bool(true)),
+            VmTestCase::new("!(if (false) { 5; })", object::Object::bool(true)),
         ];
 
-        run_vm_tests(&tests);
+        run_vm_tests(&tests).expect("a vm test failed.");
     }
 
     #[test]
@@ -581,8 +601,17 @@ mod test {
             VmTestCase::new("if (1 < 2) { 10 }", object::Object::int(10)),
             VmTestCase::new("if (1 < 2) { 10 } else { 20 }", object::Object::int(10)),
             VmTestCase::new("if (1 > 2) { 10 } else { 20 }", object::Object::int(20)),
+            VmTestCase::new("if (1 > 2) { 10 }", object::Object::null()),
+            VmTestCase::new("if (false) { 10 }", object::Object::null()),
+            VmTestCase::new(
+                "if ((if (false) { 10 })) { 10 } else { 20 }",
+                object::Object::int(20),
+            ),
+            VmTestCase::new("if (false) {}", object::Object::null()),
+            VmTestCase::new("if (false) {} else {}", object::Object::null()),
+            VmTestCase::new("if (true) {} else {}", object::Object::null()),
         ];
 
-        run_vm_tests(&tests);
+        run_vm_tests(&tests).expect("a vm test failed.");
     }
 }

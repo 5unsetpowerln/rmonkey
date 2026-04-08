@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use thiserror::Error;
 
-use crate::ast::PrefixExpression;
+use crate::ast::{BlockStatement, PrefixExpression};
 use crate::code::{OpCodeKind, create_inst};
 use crate::{ast, object};
 
@@ -230,10 +230,17 @@ impl Compiler {
 
             ast::Node::IfExpression(if_expr) => {
                 // condition
+                // jump-not-truthy alternative
+                // consequence
+                // jump end
+                // alternative/OpNull
+                // end
+
+                // condition
                 self.compile(if_expr.condition.as_ref())
                     .context("failed to compile the condition.")?;
 
-                // jump-not-truthy to alternative
+                // jump-not-truthy alternative
                 let jump_not_truthy_pos = self
                     .add_inst(OpCodeKind::JumpNotTruthy, &[9999])
                     .context("failed to add the jump-not-truthy instruction.")?;
@@ -245,41 +252,35 @@ impl Compiler {
                     self.remove_last_inst();
                 }
 
+                // jump end
+                let jump_pos = self
+                    .add_inst(OpCodeKind::Jump, &[9999])
+                    .context("failed to add the jump instruction.")?;
+
+                // overwrite jump-not-truthy
+                let alternative_pos = self.bytecode.instructions.len();
+                self.change_operands(jump_not_truthy_pos, &[alternative_pos as i64])
+                    .context("failed to change operands of the jump-not-truthy instruction.")?;
+
+                // alternative
                 if let Some(alternative) = if_expr.alternative.as_ref() {
-                    // jump to "after alternative"
-                    let jump_pos = self
-                        .add_inst(OpCodeKind::Jump, &[9999])
-                        .context("failed to add the jump instruction.")?;
-
-                    let alternative_pos = self.bytecode.instructions.len();
-                    self.change_operands(jump_not_truthy_pos, &[alternative_pos as i64])
-                        .context("failed to change operands of the jump-not-truthy instruction.")?;
-
-                    // alternative
                     self.compile(alternative)
                         .context("failed to copile the alternative block.")?;
                     if self.last_inst_is(OpCodeKind::Pop) {
                         self.remove_last_inst();
                     }
-
-                    let after_alternative_pos = self.bytecode.instructions.len();
-                    self.change_operands(jump_pos, &[after_alternative_pos as i64])
-                        .context("failed to change operands of the jump instruction.")?;
                 } else {
-                    let after_consequence_pos = self.bytecode.instructions.len();
-                    self.change_operands(jump_not_truthy_pos, &[after_consequence_pos as i64])
-                        .context(
-                            "failed to change the operands of the jump-not-truthy instruction.",
-                        )?;
+                    self.add_inst(OpCodeKind::Null, &[])
+                        .context("failed to push a null instruction.")?;
                 }
+
+                // overwrite jump
+                let end_pos = self.bytecode.instructions.len();
+                self.change_operands(jump_pos, &[end_pos as i64])
+                    .context("failed to change operands of the jump instruction.")?;
             }
 
-            ast::Node::BlockStatement(block_stmt) => {
-                for stmt in block_stmt.statements.iter() {
-                    self.compile(stmt)
-                        .context("failed to compile a statement")?;
-                }
-            }
+            ast::Node::BlockStatement(block_stmt) => self.compile_block_statement(block_stmt)?,
 
             ast::Node::IntegerLiteral(int_literal) => {
                 let int_obj = object::Object::int(int_literal.value);
@@ -302,6 +303,24 @@ impl Compiler {
             }
 
             _ => unimplemented!(),
+        }
+
+        Ok(())
+    }
+
+    fn compile_block_statement(&mut self, block_stmt: &BlockStatement) -> Result<()> {
+        // block statementに文が一つも含まれない場合に何が評価されるのかが本を見てもわからなかったため、nullを評価する文を自動で追加するようにした
+        if block_stmt.statements.is_empty() {
+            self.add_inst(OpCodeKind::Null, &[])
+                .context("failed to add a null instruction.")?;
+            self.add_inst(OpCodeKind::Pop, &[])
+                .context("failed to add an pop instruction.")?;
+            return Ok(());
+        }
+
+        for stmt in block_stmt.statements.iter() {
+            self.compile(stmt)
+                .context("failed to compile a statement")?;
         }
 
         Ok(())
@@ -636,17 +655,21 @@ mod test {
                 "if (true) { 10 }; 3333;",
                 &[Object::int(10), Object::int(3333)],
                 &[
-                    // 0
+                    // 0000
                     create_inst(OpCodeKind::True, &[]).unwrap(),
-                    // 1
-                    create_inst(OpCodeKind::JumpNotTruthy, &[7]).unwrap(),
-                    // 4
+                    // 0001
+                    create_inst(OpCodeKind::JumpNotTruthy, &[10]).unwrap(),
+                    // 0004
                     create_inst(OpCodeKind::Constant, &[0]).unwrap(),
-                    // 7
+                    // 0007
+                    create_inst(OpCodeKind::Jump, &[11]).unwrap(),
+                    // 0010
+                    create_inst(OpCodeKind::Null, &[]).unwrap(),
+                    // 0011
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
-                    // 8
+                    // 0012
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
-                    // 11
+                    // 0015
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),

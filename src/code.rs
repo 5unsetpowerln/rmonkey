@@ -39,6 +39,7 @@ pub enum OpCodeKind {
     Bang,
     JumpNotTruthy,
     Jump,
+    Null,
 }
 
 #[derive(Debug)]
@@ -78,6 +79,7 @@ impl OpCodeDef {
             OpCodeKind::Bang => &Self::BANG,
             OpCodeKind::Jump => &Self::JUMP,
             OpCodeKind::JumpNotTruthy => &Self::JUMP_NOT_TRUTHY,
+            OpCodeKind::Null => &Self::NULL,
         }
     }
 
@@ -106,6 +108,7 @@ impl OpCodeDef {
     const JUMP_NOT_TRUTHY: OpCodeDef =
         OpCodeDef::new(OpCodeKind::JumpNotTruthy, "OpJumpNotTruthy", &[2]);
     const JUMP: OpCodeDef = OpCodeDef::new(OpCodeKind::Jump, "OpJump", &[2]);
+    const NULL: OpCodeDef = OpCodeDef::new(OpCodeKind::Null, "OpNull", &[]);
 }
 
 impl fmt::Display for OpCodeDef {
