@@ -6,12 +6,16 @@ use thiserror::Error;
 
 use crate::ast::{BlockStatement, PrefixExpression};
 use crate::code::{OpCodeKind, create_inst};
+use crate::symbol_table::{SymbolTable, create_symbol_table};
 use crate::{ast, object};
 
 #[derive(Debug, Error)]
 pub enum CompileError {
     #[error("unknown operator `{operator}`")]
     UnknownOperator { operator: String },
+
+    #[error("undefined identifier `{identifier}`")]
+    UndefinedIdentifier { identifier: String },
 }
 
 #[derive(Debug)]
@@ -34,6 +38,7 @@ pub struct Compiler {
     bytecode: ByteCode,
     last_inst: Option<AddedInstruction>, // 最近追加された命令
     prev_inst: Option<AddedInstruction>, // その前に追加された命令
+    symbol_table: SymbolTable,
 }
 
 impl Compiler {
@@ -42,6 +47,7 @@ impl Compiler {
             bytecode: ByteCode::new(),
             last_inst: None,
             prev_inst: None,
+            symbol_table: create_symbol_table(),
         }
     }
 
@@ -117,6 +123,14 @@ impl Compiler {
                     .compile(ret_stmt)
                     .context("failed to compile the return statement.")?,
             },
+
+            ast::Node::LetStatement(let_stmt) => {
+                self.compile(&let_stmt.value)
+                    .context("failed to compile the value.")?;
+                let symbol = self.symbol_table.define(&let_stmt.name.value);
+                self.add_inst(OpCodeKind::SetGlobal, &[symbol.index as i64])
+                    .context("failed to add the set-global instruction.")?;
+            }
 
             ast::Node::ExpressionStatement(expr_stmt) => {
                 self.compile(&expr_stmt.value)
@@ -302,6 +316,18 @@ impl Compiler {
                 }
             }
 
+            ast::Node::Identifier(ident) => {
+                let symbol = match self.symbol_table.resolve(&ident.value) {
+                    Some(s) => s,
+                    None => bail!(CompileError::UndefinedIdentifier {
+                        identifier: ident.value.clone()
+                    }),
+                };
+
+                self.add_inst(OpCodeKind::GetGlobal, &[symbol.index as i64])
+                    .context("failed to add the get-global instruction.")?;
+            }
+
             _ => unimplemented!(),
         }
 
@@ -355,6 +381,7 @@ mod test {
     use crate::lexer::Lexer;
     use crate::object::Object;
     use crate::parser::Parser;
+    use crate::symbol_table::reset_symbol_count;
     use crate::utils::print_errors;
 
     struct CompilerTestCase {
@@ -377,6 +404,11 @@ mod test {
 
     fn run_compiler_tests(tests: &[CompilerTestCase]) {
         for (i, test) in tests.iter().enumerate() {
+            unsafe {
+                reset_symbol_count();
+            }
+            println!("testing {}", i);
+
             let program = parse(&test.input).unwrap_or_else(|err| {
                 print_errors(
                     &format!("test {} failed. failed to parse a program.", i),
@@ -684,6 +716,56 @@ mod test {
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                     create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_global_let_statements() {
+        let tests = [
+            CompilerTestCase::new(
+                "
+                let one = 1;
+                let two = 2;
+            ",
+                &[Object::int(1), Object::int(2)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[1]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+                        let one = 1;
+                        one;
+                    ",
+                &[Object::int(1)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+                                    let one = 1;
+                                    let two = one;
+                                    two;
+                                ",
+                &[Object::int(1)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[1]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[1]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),

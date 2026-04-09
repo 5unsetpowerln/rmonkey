@@ -1,3 +1,4 @@
+use std::slice;
 use std::sync::{self, LazyLock, PoisonError};
 use std::sync::{Arc, RwLock};
 
@@ -48,11 +49,16 @@ pub enum RuntimeError {
 
     #[error("race error: {msg}")]
     RaceError { msg: String },
+
+    #[error("index `{idx}` is not binded to any variable.")]
+    UndefinedVariable { idx: usize },
 }
 
 static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
 static FALSE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(false)));
 static NULL: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::null()));
+
+const GLOBAL_SIZE: usize = 65536;
 
 pub struct Vm {
     constants: Vec<Arc<Object>>,
@@ -60,64 +66,67 @@ pub struct Vm {
     stack: Vec<Arc<Object>>,
     sp: usize,
     last_stack_top: Option<Arc<Object>>,
+    globals: Vec<Option<Arc<Object>>>,
+    ip: usize,
 }
 
 impl Vm {
     pub fn new(bytecode: &ByteCode) -> Self {
         let mut stack = Vec::with_capacity(STACK_SIZE);
-
         stack.resize(STACK_SIZE, Arc::new(Object::null()));
+
+        let globals = (0..GLOBAL_SIZE).map(|_| None).collect();
 
         Self {
             constants: bytecode.constants.clone(),
             instructions: bytecode.instructions.clone(),
             stack,
             sp: 0,
+            ip: 0,
             last_stack_top: None,
+            globals,
         }
     }
 
-    fn read_n(&self, pos: usize, n: usize) -> Result<&[u8]> {
-        if let Some(x) = self.instructions.get(pos..pos + 2) {
+    // ipからnバイト読んで、ipをnバイト進める
+    fn read_n(&mut self, n: usize) -> Result<&[u8]> {
+        let opt = self.instructions.get(self.ip..self.ip + n);
+
+        self.ip += n;
+
+        if let Some(x) = opt {
             Ok(x)
         } else {
             bail!(RuntimeError::InstructionPointerOverflow {
                 inst_length: self.instructions.len(),
-                inst_pointer: pos + 2
+                inst_pointer: self.ip + n
             });
         }
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let mut ip = 0;
+        self.ip = 0;
 
-        while ip < self.instructions.len() {
+        while self.ip < self.instructions.len() {
             // 命令の取得
-            let op_kind = match self.instructions.get(ip) {
-                Some(x) => match OpCodeKind::from_u8(*x) {
-                    Ok(y) => y,
+            let op_kind = {
+                let byte = self.read_n(1)?[0];
+                match OpCodeKind::from_u8(byte) {
+                    Ok(x) => x,
                     Err(_) => {
-                        bail!(RuntimeError::UnknownOpCodeByte { byte: *x });
+                        bail!(RuntimeError::UnknownOpCodeByte { byte });
                     }
-                },
-                None => {
-                    bail!(RuntimeError::InstructionPointerOverflow {
-                        inst_length: self.instructions.len(),
-                        inst_pointer: ip,
-                    });
                 }
             };
-            ip += 1;
 
             // 命令ごとの処理
             match op_kind {
                 OpCodeKind::Constant => {
                     // 定数配列のインデックスを取得する
-                    let raw_operands = self.read_n(ip, 2)?;
+                    let raw_operands = self.read_n(2)?;
 
                     //// 上の処理で幅が2であることは確定済みなのでunwrapしても良い
                     let const_idx = u16_from_be_bytes(raw_operands).unwrap() as usize;
-                    ip += 2;
 
                     // 定数を取得する
                     let const_value = match self.constants.get(const_idx) {
@@ -217,26 +226,45 @@ impl Vm {
                 }
 
                 OpCodeKind::Jump => {
-                    let raw_operands = self.read_n(ip, 2)?;
+                    let raw_operands = self.read_n(2)?;
 
                     let pos = u16_from_be_bytes(raw_operands).unwrap() as usize;
-                    ip = pos;
+
+                    self.ip = pos;
                 }
 
                 OpCodeKind::JumpNotTruthy => {
-                    let raw_operands = self.read_n(ip, 2)?;
+                    let raw_operands = self.read_n(2)?;
 
                     let pos = u16_from_be_bytes(raw_operands).unwrap() as usize;
 
                     let condition = self.pop().context("failed to pop the condition.")?;
                     if !condition.is_truthy() {
-                        ip = pos;
-                    } else {
-                        // posを読んだ分
-                        ip += 2;
+                        self.ip = pos;
                     }
                 }
 
+                OpCodeKind::SetGlobal => {
+                    let raw_operands = self.read_n(2)?;
+                    let global_idx = u16_from_be_bytes(raw_operands).unwrap() as usize;
+
+                    let value = self.pop().context("failed to pop the value.")?;
+
+                    self.globals[global_idx].replace(value);
+                }
+
+                OpCodeKind::GetGlobal => {
+                    let raw_operands = self.read_n(2)?;
+                    let global_idx = u16_from_be_bytes(raw_operands).unwrap() as usize;
+
+                    let value = if let Some(x) = self.globals[global_idx].as_ref() {
+                        x.clone()
+                    } else {
+                        bail!(RuntimeError::UndefinedVariable { idx: global_idx })
+                    };
+
+                    self.push(value).context("failed to push the value")?;
+                }
                 _ => unimplemented!(),
             }
         }
@@ -422,6 +450,7 @@ mod test {
 
     use crate::compiler::Compiler;
     use crate::lexer::Lexer;
+    use crate::object::Object;
     use crate::parser::Parser;
     use crate::{ast, object};
 
@@ -614,4 +643,18 @@ mod test {
 
         run_vm_tests(&tests).expect("a vm test failed.");
     }
+
+    // #[test]
+    // fn test_global_let_statements() {
+    //     let tests = [
+    //         VmTestCase::new("let one = 1; one", Object::int(1)),
+    //         VmTestCase::new("let one = 1; let two = 2; one + two", Object::int(3)),
+    //         VmTestCase::new(
+    //             "let one = 1; let two = one + one; one + two",
+    //             Object::int(3),
+    //         ),
+    //     ];
+
+    //     run_vm_tests(&tests).expect("a vm test failed.");
+    // }
 }

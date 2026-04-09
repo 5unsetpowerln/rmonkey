@@ -11,6 +11,7 @@ mod lexer;
 mod object;
 mod parser;
 mod repl;
+mod symbol_table;
 mod token;
 mod utils;
 mod vm;

@@ -40,6 +40,8 @@ pub enum OpCodeKind {
     JumpNotTruthy,
     Jump,
     Null,
+    SetGlobal,
+    GetGlobal,
 }
 
 #[derive(Debug)]
@@ -80,6 +82,8 @@ impl OpCodeDef {
             OpCodeKind::Jump => &Self::JUMP,
             OpCodeKind::JumpNotTruthy => &Self::JUMP_NOT_TRUTHY,
             OpCodeKind::Null => &Self::NULL,
+            OpCodeKind::GetGlobal => &Self::GET_GLOBAL,
+            OpCodeKind::SetGlobal => &Self::SET_GLOBAL,
         }
     }
 
@@ -98,6 +102,7 @@ impl OpCodeDef {
 
     const TRUE: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpTrue", &[]);
     const FALSE: OpCodeDef = OpCodeDef::new(OpCodeKind::Add, "OpFalse", &[]);
+    const NULL: OpCodeDef = OpCodeDef::new(OpCodeKind::Null, "OpNull", &[]);
 
     const EQUAL: OpCodeDef = OpCodeDef::new(OpCodeKind::Equal, "OpEqual", &[]);
     const NOT_EQUAL: OpCodeDef = OpCodeDef::new(OpCodeKind::NotEqual, "OpNotEqual", &[]);
@@ -105,10 +110,13 @@ impl OpCodeDef {
 
     const MINUS: OpCodeDef = OpCodeDef::new(OpCodeKind::Minus, "OpMinus", &[]);
     const BANG: OpCodeDef = OpCodeDef::new(OpCodeKind::Bang, "OpBang", &[]);
+
     const JUMP_NOT_TRUTHY: OpCodeDef =
         OpCodeDef::new(OpCodeKind::JumpNotTruthy, "OpJumpNotTruthy", &[2]);
     const JUMP: OpCodeDef = OpCodeDef::new(OpCodeKind::Jump, "OpJump", &[2]);
-    const NULL: OpCodeDef = OpCodeDef::new(OpCodeKind::Null, "OpNull", &[]);
+
+    const GET_GLOBAL: OpCodeDef = OpCodeDef::new(OpCodeKind::GetGlobal, "OpGetGlobal", &[2]);
+    const SET_GLOBAL: OpCodeDef = OpCodeDef::new(OpCodeKind::SetGlobal, "OpSetGlobal", &[2]);
 }
 
 impl fmt::Display for OpCodeDef {
