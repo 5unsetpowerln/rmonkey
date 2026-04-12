@@ -78,6 +78,18 @@ impl Object {
         Self::String(Arc::new(RwLock::new(StringObject::new(value))))
     }
 
+    pub fn array(array: &[Object]) -> Self {
+        let arc_array = array
+            .iter()
+            .map(|element| Arc::new(element.clone()))
+            .collect::<Vec<Arc<Object>>>();
+        Self::Array(Arc::new(RwLock::new(Array::new(&arc_array))))
+    }
+
+    pub fn arc_array(array: &[Arc<Object>]) -> Self {
+        Self::Array(Arc::new(RwLock::new(Array::new(array))))
+    }
+
     pub fn builtin(func: BuiltinFunction) -> Self {
         Self::Builtin(Arc::new(RwLock::new(Builtin::new(func))))
     }

@@ -278,11 +278,33 @@ impl Vm {
 
                     self.push(value).context("failed to push the value")?;
                 }
+
+                OpCodeKind::Array => {
+                    let raw_operands = self.read_n(2)?;
+                    let size = u16_from_be_bytes(raw_operands).unwrap() as usize;
+
+                    let array = self.build_array(self.sp - size, self.sp);
+                    self.sp -= size;
+
+                    self.push(array).context("failed to push the array.")?;
+                }
+
                 _ => unimplemented!(),
             }
         }
 
         Ok(())
+    }
+
+    // スタックから配列オブジェクトを作成する
+    fn build_array(&self, start_idx: usize, end_idx: usize) -> Arc<Object> {
+        let mut elements = Vec::with_capacity(end_idx - start_idx);
+
+        for i in start_idx..end_idx {
+            elements.push(self.stack[i].clone())
+        }
+
+        Arc::new(Object::arc_array(&elements))
     }
 
     // 四則演算の実行
@@ -604,6 +626,31 @@ mod test {
                 }
             }
 
+            (object::Object::Array(expected), object::Object::Array(actual)) => {
+                let expected = expected.read().unwrap();
+                let actual = actual.read().unwrap();
+
+                if expected.array.len() != actual.array.len() {
+                    bail!(
+                        "wrong number of elements. expected: {}, got: {}",
+                        expected.array.len(),
+                        actual.array.len()
+                    );
+                }
+
+                for (i, expected_element) in expected.array.iter().enumerate() {
+                    let actual_element = &actual.array[i];
+
+                    test_expected_object(expected_element.as_ref(), Some(actual_element.clone()))
+                        .with_context(|| {
+                        format!(
+                            "element at {} is wrong. expected: {}, got: {}",
+                            i, expected_element, actual_element
+                        )
+                    })?;
+                }
+            }
+
             (object::Object::Null(_), object::Object::Null(_)) => {}
 
             _ => {
@@ -724,5 +771,20 @@ mod test {
         ];
 
         run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_array_literals() {
+        let tests = [
+            VmTestCase::new("[]", Object::array(&[])),
+            VmTestCase::new(
+                "[1, 2, 3]",
+                Object::array(&[Object::int(1), Object::int(2), Object::int(3)]),
+            ),
+            VmTestCase::new(
+                "[1 + 2, 3 * 4, 5 + 6]",
+                Object::array(&[Object::int(3), Object::int(12), Object::int(11)]),
+            ),
+        ];
     }
 }

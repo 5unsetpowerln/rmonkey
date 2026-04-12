@@ -352,6 +352,18 @@ impl Compiler {
                     .context("failed to add the get-global instruction.")?;
             }
 
+            ast::Node::ArrayLiteral(array_literal) => {
+                for element in array_literal.elements.iter() {
+                    self.compile(element)
+                        .context("failed to compile an element.")?;
+                }
+
+                let size = array_literal.elements.len();
+
+                self.add_inst(OpCodeKind::Array, &[size as i64])
+                    .context("failed to add the array instruction.")?;
+            }
+
             _ => unimplemented!(),
         }
 
@@ -841,6 +853,57 @@ mod test {
                     create_inst(OpCodeKind::Constant, &[0]).unwrap(),
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
                     create_inst(OpCodeKind::Add, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_array_literals() {
+        let tests = [
+            CompilerTestCase::new(
+                "[]",
+                &[],
+                &[
+                    create_inst(OpCodeKind::Array, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "[1, 2, 3]",
+                &[Object::int(1), Object::int(2), Object::int(3)],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Array, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "[1 + 2, 3 - 4, 5 * 6]",
+                &[
+                    Object::int(1),
+                    Object::int(2),
+                    Object::int(3),
+                    Object::int(4),
+                    Object::int(5),
+                    Object::int(6),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Add, &[]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Sub, &[]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[4]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[5]).unwrap(),
+                    create_inst(OpCodeKind::Mul, &[]).unwrap(),
+                    create_inst(OpCodeKind::Array, &[3]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
