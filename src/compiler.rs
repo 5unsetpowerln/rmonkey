@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::ast::{BlockStatement, PrefixExpression};
 use crate::code::{OpCodeKind, create_inst};
+use crate::object::Object;
 use crate::symbol_table::{SymbolTable, create_symbol_table};
 use crate::{ast, object};
 
@@ -49,6 +50,19 @@ impl Compiler {
             prev_inst: None,
             symbol_table: create_symbol_table(),
         }
+    }
+
+    pub fn new_with_state(symbol_table: &SymbolTable, constants: &[Arc<Object>]) -> Self {
+        let mut _self = Self::new();
+
+        _self.bytecode.constants = constants.to_vec();
+        _self.symbol_table = symbol_table.clone();
+
+        _self
+    }
+
+    pub fn get_symbol_table(&self) -> SymbolTable {
+        self.symbol_table.clone()
     }
 
     fn add_inst(&mut self, kind: OpCodeKind, operands: &[i64]) -> Result<usize> {
@@ -296,6 +310,16 @@ impl Compiler {
 
             ast::Node::BlockStatement(block_stmt) => self.compile_block_statement(block_stmt)?,
 
+            ast::Node::StringLiteral(str_literal) => {
+                let str_obj = object::Object::str(str_literal.value.as_str());
+
+                let idx = self.add_const(Arc::new(str_obj));
+                let operands = [idx as i64];
+
+                self.add_inst(OpCodeKind::Constant, &operands)
+                    .context("failed to add the constant instruction.")?;
+            }
+
             ast::Node::IntegerLiteral(int_literal) => {
                 let int_obj = object::Object::int(int_literal.value);
 
@@ -490,11 +514,36 @@ mod test {
 
         for (i, expected_const) in expected.iter().enumerate() {
             match expected_const {
-                Object::Integer(int_obj) => {
-                    test_integer_object(int_obj.read().unwrap().value, &actual[i])
+                Object::Integer(expected_int_obj) => {
+                    test_integer_object(expected_int_obj.read().unwrap().value, &actual[i])
                         .with_context(|| format!("constant {} failed", i))?;
                 }
+
+                Object::String(expected_str_obj) => {
+                    test_string_object(expected_str_obj.read().unwrap().value.as_str(), &actual[i])
+                        .with_context(|| format!("constant {} failed", i))?;
+                }
+
                 _ => unimplemented!(),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn test_string_object(expected: &str, actual: &Object) -> Result<()> {
+        match actual {
+            Object::String(str_obj) => {
+                if str_obj.read().unwrap().value.as_str() != expected {
+                    bail!(
+                        "object has wrong value. expected: {}, got: {}.",
+                        expected,
+                        str_obj.read().unwrap().value
+                    );
+                }
+            }
+            other => {
+                bail!("object is not String. got: {}", other)
             }
         }
 
@@ -503,12 +552,12 @@ mod test {
 
     fn test_integer_object(expected: i64, actual: &Object) -> Result<()> {
         match actual {
-            Object::Integer(integer_object) => {
-                if integer_object.read().unwrap().value != expected {
+            Object::Integer(int_obj) => {
+                if int_obj.read().unwrap().value != expected {
                     bail!(
                         "object has wrong value. expected: {}, got: {}.",
                         expected,
-                        integer_object.read().unwrap().value
+                        int_obj.read().unwrap().value
                     );
                 }
             }
@@ -766,6 +815,32 @@ mod test {
                     create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
                     create_inst(OpCodeKind::SetGlobal, &[1]).unwrap(),
                     create_inst(OpCodeKind::GetGlobal, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_string_expressions() {
+        let tests = [
+            CompilerTestCase::new(
+                "\"monkey\"",
+                &[Object::str("monkey")],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "\"mon\" + \"key\"",
+                &[Object::str("mon"), Object::str("key")],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Add, &[]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),

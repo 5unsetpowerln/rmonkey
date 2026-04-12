@@ -21,7 +21,7 @@ impl Symbol {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SymbolTable {
     store: HashMap<String, Symbol>,
 }

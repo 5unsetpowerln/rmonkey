@@ -1,12 +1,14 @@
 use std::io::{Write, stdin, stdout};
+use std::sync::Arc;
 
 use crate::compiler::Compiler;
 use crate::eval::eval;
 use crate::lexer::Lexer;
-use crate::object::Environment;
+use crate::object::{Environment, Object};
 use crate::parser::Parser;
+use crate::symbol_table;
 use crate::utils::print_errors;
-use crate::vm::Vm;
+use crate::vm::{self, Vm};
 
 const PROMPT: &str = ">> ";
 
@@ -16,6 +18,13 @@ pub fn start() {
 
     let stdin_ = stdin();
     let mut stdout_ = stdout();
+
+    let mut globals = (0..vm::GLOBAL_SIZE)
+        .map(|_| None)
+        .collect::<Vec<Option<Arc<Object>>>>()
+        .to_vec();
+    let mut symbol_table = symbol_table::create_symbol_table();
+    let mut constants = Vec::new();
 
     loop {
         print!("{}", PROMPT);
@@ -38,18 +47,24 @@ pub fn start() {
             }
         };
 
-        let mut compiler = Compiler::new();
+        let mut compiler = Compiler::new_with_state(&symbol_table, &constants);
         if let Err(err) = compiler.compile(&program) {
             print_errors("failed to compile the program", err);
             continue;
         }
 
         let bytecode = compiler.get_bytecode();
-        let mut vm = Vm::new(bytecode);
+
+        symbol_table = compiler.get_symbol_table();
+        constants = bytecode.constants.clone();
+
+        let mut vm = Vm::new_with_global_store(bytecode, &globals);
         if let Err(err) = vm.run() {
             print_errors("failed to run the program on the vm", err);
             continue;
         }
+
+        globals = vm.get_globals();
 
         if let Some(last_stack_top) = vm.last_stack_top() {
             println!("{}", last_stack_top.as_ref());

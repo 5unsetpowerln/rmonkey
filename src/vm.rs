@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::code::OpCodeKind;
 use crate::compiler::ByteCode;
-use crate::object::{BoolObject, IntegerObject, Object};
+use crate::object::{BoolObject, IntegerObject, Object, StringObject};
 use crate::utils::u16_from_be_bytes;
 
 const STACK_SIZE: usize = 2048;
@@ -58,7 +58,7 @@ static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true
 static FALSE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(false)));
 static NULL: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::null()));
 
-const GLOBAL_SIZE: usize = 65536;
+pub const GLOBAL_SIZE: usize = 65536;
 
 pub struct Vm {
     constants: Vec<Arc<Object>>,
@@ -86,6 +86,19 @@ impl Vm {
             last_stack_top: None,
             globals,
         }
+    }
+
+    pub fn new_with_global_store(bytecode: &ByteCode, globals: &[Option<Arc<Object>>]) -> Self {
+        let mut _self = Self::new(bytecode);
+
+        let globals_size = _self.globals.len();
+        _self.globals = globals[0..globals_size].to_vec();
+
+        _self
+    }
+
+    pub fn get_globals(&self) -> Vec<Option<Arc<Object>>> {
+        self.globals.clone()
     }
 
     // ipからnバイト読んで、ipをnバイト進める
@@ -283,11 +296,39 @@ impl Vm {
                 self.execute_integer_binary_operation(op_kind, left.clone(), right.clone())
                     .context("failed to execute integer infix operation.")?;
             }
+
+            (Object::String(left), Object::String(right)) => self
+                .execute_string_binary_operation(op_kind, left.clone(), right.clone())
+                .context("failed to execute string infix operation.")?,
+
             _ => bail!(RuntimeError::UnknownOperandsTypesForInfixOperation {
                 left: left.to_string(),
                 right: right.to_string()
             }),
         }
+
+        Ok(())
+    }
+
+    fn execute_string_binary_operation(
+        &mut self,
+        op_kind: OpCodeKind,
+        left: Arc<RwLock<StringObject>>,
+        right: Arc<RwLock<StringObject>>,
+    ) -> Result<()> {
+        let left = &left.read().unwrap().value;
+        let right = &right.read().unwrap().value;
+
+        let result = match op_kind {
+            OpCodeKind::Add => format!("{}{}", left, right),
+            _ => bail!(RuntimeError::UnknownOperandsTypesForInfixOperation {
+                left: left.clone(),
+                right: right.clone()
+            }),
+        };
+
+        self.push(Arc::new(Object::str(&result)))
+            .context("failed to push the result value.")?;
 
         Ok(())
     }
@@ -550,6 +591,19 @@ mod test {
                 }
             }
 
+            (object::Object::String(expected), object::Object::String(actual)) => {
+                let expected = &expected.read().unwrap().value;
+                let actual = &actual.read().unwrap().value;
+
+                if expected.as_str() != actual.as_str() {
+                    bail!(
+                        "object has wrong value. expected: {}, got: {}.",
+                        expected,
+                        actual
+                    )
+                }
+            }
+
             (object::Object::Null(_), object::Object::Null(_)) => {}
 
             _ => {
@@ -644,17 +698,31 @@ mod test {
         run_vm_tests(&tests).expect("a vm test failed.");
     }
 
-    // #[test]
-    // fn test_global_let_statements() {
-    //     let tests = [
-    //         VmTestCase::new("let one = 1; one", Object::int(1)),
-    //         VmTestCase::new("let one = 1; let two = 2; one + two", Object::int(3)),
-    //         VmTestCase::new(
-    //             "let one = 1; let two = one + one; one + two",
-    //             Object::int(3),
-    //         ),
-    //     ];
+    #[test]
+    fn test_global_let_statements() {
+        let tests = [
+            VmTestCase::new("let one = 1; one", Object::int(1)),
+            VmTestCase::new("let one = 1; let two = 2; one + two", Object::int(3)),
+            VmTestCase::new(
+                "let one = 1; let two = one + one; one + two",
+                Object::int(3),
+            ),
+        ];
 
-    //     run_vm_tests(&tests).expect("a vm test failed.");
-    // }
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_string_expressions() {
+        let tests = [
+            VmTestCase::new("\"monkey\"", Object::str("monkey")),
+            VmTestCase::new("\"mon\" + \"key\"", Object::str("monkey")),
+            VmTestCase::new(
+                "\"mon\" + \"key\" + \"banana\"",
+                Object::str("monkeybanana"),
+            ),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
 }
