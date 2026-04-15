@@ -43,6 +43,8 @@ pub enum OpCodeKind {
     SetGlobal,
     GetGlobal,
     Array,
+    Hash,
+    Index,
 }
 
 #[derive(Debug)]
@@ -86,6 +88,8 @@ impl OpCodeDef {
             OpCodeKind::GetGlobal => &Self::GET_GLOBAL,
             OpCodeKind::SetGlobal => &Self::SET_GLOBAL,
             OpCodeKind::Array => &Self::ARRAY,
+            OpCodeKind::Hash => &Self::HASH,
+            OpCodeKind::Index => &Self::INDEX,
         }
     }
 
@@ -121,6 +125,9 @@ impl OpCodeDef {
     const SET_GLOBAL: OpCodeDef = OpCodeDef::new(OpCodeKind::SetGlobal, "OpSetGlobal", &[2]);
 
     const ARRAY: OpCodeDef = OpCodeDef::new(OpCodeKind::Array, "OpArray", &[2]);
+    const HASH: OpCodeDef = OpCodeDef::new(OpCodeKind::Hash, "OpHash", &[2]);
+
+    const INDEX: OpCodeDef = OpCodeDef::new(OpCodeKind::Index, "OpIndex", &[]);
 }
 
 impl fmt::Display for OpCodeDef {

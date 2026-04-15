@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::slice;
 use std::sync::{self, LazyLock, PoisonError};
 use std::sync::{Arc, RwLock};
@@ -7,7 +8,7 @@ use thiserror::Error;
 
 use crate::code::OpCodeKind;
 use crate::compiler::ByteCode;
-use crate::object::{BoolObject, IntegerObject, Object, StringObject};
+use crate::object::{BoolObject, HashKeyObject, HashObject, IntegerObject, Object, StringObject};
 use crate::utils::u16_from_be_bytes;
 
 const STACK_SIZE: usize = 2048;
@@ -52,6 +53,12 @@ pub enum RuntimeError {
 
     #[error("index `{idx}` is not binded to any variable.")]
     UndefinedVariable { idx: usize },
+
+    #[error("`{target}` can not be accessed with index expression.")]
+    UnsupportedTargetOfIndexOperation { target: String, index: String },
+
+    #[error("`{index}` can not be index.")]
+    UnsupportedIndexOfIndexOperation { target: String, index: String },
 }
 
 static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
@@ -289,11 +296,101 @@ impl Vm {
                     self.push(array).context("failed to push the array.")?;
                 }
 
+                OpCodeKind::Hash => {
+                    let raw_operands = self.read_n(2)?;
+                    let raw_size = u16_from_be_bytes(raw_operands).unwrap() as usize;
+
+                    let hash_obj = self
+                        .build_hash(self.sp - raw_size, self.sp)
+                        .context("failed to create the hash object from the stack.")?;
+
+                    self.sp -= raw_size;
+
+                    self.push(hash_obj)
+                        .context("failed to push the hash object.")?;
+                }
+
+                OpCodeKind::Index => {
+                    let index = self.pop().context("failed to pop the index value.")?;
+                    let target = self.pop().context("failed to pop the accessed value.")?;
+                    self.execute_index_operation(target, index)
+                        .context("failed to execute the index operation.")?;
+                }
+
                 _ => unimplemented!(),
             }
         }
 
         Ok(())
+    }
+
+    fn execute_index_operation(&mut self, target: Arc<Object>, index: Arc<Object>) -> Result<()> {
+        match target.as_ref() {
+            Object::Array(array) => {
+                let index = if let Object::Integer(x) = index.as_ref() {
+                    x.read().unwrap().value as usize
+                } else {
+                    bail!(RuntimeError::UnsupportedIndexOfIndexOperation {
+                        target: target.to_string(),
+                        index: index.to_string()
+                    });
+                };
+
+                if let Some(value) = array.read().unwrap().array.get(index) {
+                    self.push(value.clone())
+                        .context("failed to push the value.")?;
+                } else {
+                    self.push(Arc::new(Object::null()))
+                        .context("failed to push the value")?;
+                }
+
+                Ok(())
+            }
+
+            Object::Hash(hash) => {
+                let key = HashKeyObject::from_object(index.clone()).map_err(|_| {
+                    RuntimeError::UnsupportedIndexOfIndexOperation {
+                        target: target.to_string(),
+                        index: index.to_string(),
+                    }
+                })?;
+
+                if let Some(value) = hash.read().unwrap().pairs.get(&key) {
+                    self.push(value.clone())
+                        .context("failed to push the value")?;
+                } else {
+                    self.push(Arc::new(Object::null()))
+                        .context("failed to push the value")?;
+                }
+
+                Ok(())
+            }
+
+            other => {
+                bail!(RuntimeError::UnsupportedTargetOfIndexOperation {
+                    target: target.to_string(),
+                    index: index.to_string()
+                });
+            }
+        }
+    }
+
+    // スタックからhashオブジェクトを作成する
+    fn build_hash(&self, start_idx: usize, end_idx: usize) -> Result<Arc<Object>> {
+        let mut h = HashMap::new();
+
+        for offset in 0..(end_idx - start_idx) / 2 {
+            let idx = start_idx + offset;
+
+            let key = HashKeyObject::from_object(self.stack[idx * 2].clone())
+                .context("failed to create a hash key object.")?;
+            let value = self.stack[idx * 2 + 1].clone();
+
+            h.insert(key, value);
+        }
+
+        let h_obj = HashObject::new(h);
+        Ok(Arc::new(Object::Hash(Arc::new(RwLock::new(h_obj)))))
     }
 
     // スタックから配列オブジェクトを作成する
@@ -507,13 +604,14 @@ impl Vm {
 }
 
 mod test {
-    use std::sync::Arc;
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
 
     use anyhow::{Context, Result, bail};
 
     use crate::compiler::Compiler;
     use crate::lexer::Lexer;
-    use crate::object::Object;
+    use crate::object::{HashKeyObject, HashObject, Object};
     use crate::parser::Parser;
     use crate::{ast, object};
 
@@ -573,7 +671,8 @@ mod test {
                 .with_context(|| format!("test {} failed. failed to run a bytecode.", i))?;
 
             let last_stack_top = vm.last_stack_top();
-            test_expected_object(&test.expected, last_stack_top)?;
+            test_expected_object(&test.expected, last_stack_top)
+                .with_context(|| format!("test {} failed.", i))?;
         }
         Ok(())
     }
@@ -648,6 +747,33 @@ mod test {
                             i, expected_element, actual_element
                         )
                     })?;
+                }
+            }
+
+            (object::Object::Hash(expected), object::Object::Hash(actual)) => {
+                let expected = expected.read().unwrap();
+                let actual = actual.read().unwrap();
+
+                if expected.pairs.len() != actual.pairs.len() {
+                    bail!(
+                        "wrong number of elements. expected: {}, got: {}",
+                        expected.pairs.len(),
+                        actual.pairs.len()
+                    );
+                }
+
+                for (expected_key, expected_value) in expected.pairs.iter() {
+                    if let Some(actual_value) = actual.pairs.get(expected_key) {
+                        test_expected_object(expected_value.as_ref(), Some(actual_value.clone()))
+                            .with_context(|| {
+                            format!(
+                                "value for {} is wrong. expected: {}, got: {}",
+                                expected_key, expected_value, actual_value,
+                            )
+                        })?;
+                    } else {
+                        bail!("no pair for given key in pairs. got: {}", expected_key);
+                    }
                 }
             }
 
@@ -786,5 +912,63 @@ mod test {
                 Object::array(&[Object::int(3), Object::int(12), Object::int(11)]),
             ),
         ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    fn hash_from_vec(vector: Vec<(Object, Object)>) -> Object {
+        let mut h = HashMap::new();
+
+        for (key, value) in vector {
+            let k = HashKeyObject::from_object(Arc::new(key)).unwrap();
+            let v = Arc::new(value);
+
+            h.insert(k, v);
+        }
+
+        let h_obj = HashObject::new(h);
+
+        Object::Hash(Arc::new(RwLock::new(h_obj)))
+    }
+
+    #[test]
+    fn test_hash_literals() {
+        let tests = [
+            VmTestCase::new("{}", hash_from_vec(vec![])),
+            VmTestCase::new(
+                "{1: 2, 2: 3}",
+                hash_from_vec(vec![
+                    (Object::int(1), Object::int(2)),
+                    (Object::int(2), Object::int(3)),
+                ]),
+            ),
+            VmTestCase::new(
+                "{1 + 1: 2 * 2, 3 + 3: 4 * 4}",
+                hash_from_vec(vec![
+                    (Object::int(2), Object::int(4)),
+                    (Object::int(6), Object::int(16)),
+                ]),
+            ),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_index_expressions() {
+        let tests = [
+            VmTestCase::new("[1, 2, 3][1]", Object::int(2)),
+            VmTestCase::new("[1, 2, 3][0 + 2]", Object::int(3)),
+            VmTestCase::new("[[1, 1, 1]][0][0]", Object::int(1)),
+            VmTestCase::new("[][0]", Object::null()),
+            VmTestCase::new("[1, 2, 3][99]", Object::null()),
+            VmTestCase::new("[1][-1]", Object::null()),
+            VmTestCase::new("{1: 1, 2: 2}[1]", Object::int(1)),
+            VmTestCase::new("{1: 1, 2: 2}[2]", Object::int(2)),
+            VmTestCase::new("{1: 1}[0]", Object::null()),
+            VmTestCase::new("{}[0]", Object::null()),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
     }
 }

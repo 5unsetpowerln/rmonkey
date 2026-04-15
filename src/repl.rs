@@ -2,7 +2,6 @@ use std::io::{Write, stdin, stdout};
 use std::sync::Arc;
 
 use crate::compiler::Compiler;
-use crate::eval::eval;
 use crate::lexer::Lexer;
 use crate::object::{Environment, Object};
 use crate::parser::Parser;

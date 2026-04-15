@@ -5,9 +5,15 @@ use std::hash::Hash;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, anyhow, bail, ensure};
+use thiserror::Error;
 
 use crate::ast::{self, FunctionLiteral};
-use crate::eval::EvalError;
+
+#[derive(Debug, Error)]
+pub enum ObjectError {
+    #[error("cannot use {got} as a hash key.")]
+    NotHashable { got: String },
+}
 
 pub trait ObjectInterface: Display + Send {
     fn get_name(&self) -> String;
@@ -395,7 +401,7 @@ impl HashKeyObject {
             Object::Integer(x) => Self::Integer(x.clone()),
             Object::Bool(x) => Self::Bool(x.clone()),
             _ => {
-                bail!(EvalError::NotHashable {
+                bail!(ObjectError::NotHashable {
                     got: object.get_name()
                 })
             }

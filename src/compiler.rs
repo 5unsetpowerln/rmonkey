@@ -364,6 +364,24 @@ impl Compiler {
                     .context("failed to add the array instruction.")?;
             }
 
+            ast::Node::HashLiteral(hash_literal) => {
+                for (key, value) in hash_literal.pairs.iter() {
+                    self.compile(key).context("failed to compile an key.")?;
+                    self.compile(value).context("failed to compile an value")?;
+                }
+                let size = hash_literal.pairs.len() * 2;
+                self.add_inst(OpCodeKind::Hash, &[size as i64])
+                    .context("failed to add the hash instruction.")?;
+            }
+
+            ast::Node::IndexExpression(index_expr) => {
+                self.compile(index_expr.left.as_ref())
+                    .context("failed to compile the left value.")?;
+                self.compile(index_expr.index.as_ref())
+                    .context("failed to compile the index value.")?;
+                self.add_inst(OpCodeKind::Index, &[])
+                    .context("failed to add the index instruction.")?;
+            }
             _ => unimplemented!(),
         }
 
@@ -910,5 +928,111 @@ mod test {
         ];
 
         run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_hash_literals() {
+        let tests = [
+            CompilerTestCase::new(
+                "{}",
+                &[],
+                &[
+                    create_inst(OpCodeKind::Hash, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "{1: 2, 3: 4, 5: 6}",
+                &[
+                    Object::int(1),
+                    Object::int(2),
+                    Object::int(3),
+                    Object::int(4),
+                    Object::int(5),
+                    Object::int(6),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[4]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[5]).unwrap(),
+                    create_inst(OpCodeKind::Hash, &[6]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "{1: 2 + 3, 4: 5 * 6}",
+                &[
+                    Object::int(1),
+                    Object::int(2),
+                    Object::int(3),
+                    Object::int(4),
+                    Object::int(5),
+                    Object::int(6),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Add, &[]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[4]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[5]).unwrap(),
+                    create_inst(OpCodeKind::Mul, &[]).unwrap(),
+                    create_inst(OpCodeKind::Hash, &[4]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_index_expressions() {
+        let tests = [
+            CompilerTestCase::new(
+                "[1, 2, 3][1 + 1]",
+                &[
+                    Object::int(1),
+                    Object::int(2),
+                    Object::int(3),
+                    Object::int(1),
+                    Object::int(1),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Array, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[4]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[5]).unwrap(),
+                    create_inst(OpCodeKind::Add, &[]).unwrap(),
+                    create_inst(OpCodeKind::Index, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "{1: 2}[2 - 1]",
+                &[
+                    Object::int(1),
+                    Object::int(2),
+                    Object::int(2),
+                    Object::int(1),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Hash, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Sub, &[]).unwrap(),
+                    create_inst(OpCodeKind::Index, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
     }
 }
