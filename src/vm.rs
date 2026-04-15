@@ -613,6 +613,7 @@ mod test {
     use crate::lexer::Lexer;
     use crate::object::{HashKeyObject, HashObject, Object};
     use crate::parser::Parser;
+    use crate::symbol_table::reset_symbol_count;
     use crate::{ast, object};
 
     use super::Vm;
@@ -656,6 +657,10 @@ mod test {
 
     fn run_vm_tests(tests: &[VmTestCase]) -> Result<()> {
         for (i, test) in tests.iter().enumerate() {
+            unsafe {
+                reset_symbol_count();
+            }
+
             let program = parse(test.input)
                 .with_context(|| format!("test {} failed. failed to parse an input.", i))?;
 
