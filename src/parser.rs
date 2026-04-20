@@ -538,6 +538,7 @@ impl<'a> Parser<'a> {
         let mut params = Vec::new();
 
         if self.peek_token_is(TokenKind::RightParen) {
+            self.next_token();
             return Ok(params);
         }
 
