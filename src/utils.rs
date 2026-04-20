@@ -42,3 +42,7 @@ pub fn u16_from_be_bytes(array: &[u8]) -> Result<u16> {
     val |= array[1] as u16;
     Ok(val)
 }
+
+pub fn flatten_u8(array: Vec<Vec<u8>>) -> Vec<u8> {
+    array.into_iter().flatten().collect::<Vec<u8>>()
+}

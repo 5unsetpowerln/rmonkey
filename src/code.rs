@@ -45,6 +45,8 @@ pub enum OpCodeKind {
     Array,
     Hash,
     Index,
+    Call,
+    ReturnValue,
 }
 
 #[derive(Debug)]
@@ -90,6 +92,8 @@ impl OpCodeDef {
             OpCodeKind::Array => &Self::ARRAY,
             OpCodeKind::Hash => &Self::HASH,
             OpCodeKind::Index => &Self::INDEX,
+            OpCodeKind::Call => &Self::CALL,
+            OpCodeKind::ReturnValue => &Self::RETURN,
         }
     }
 
@@ -128,6 +132,9 @@ impl OpCodeDef {
     const HASH: OpCodeDef = OpCodeDef::new(OpCodeKind::Hash, "OpHash", &[2]);
 
     const INDEX: OpCodeDef = OpCodeDef::new(OpCodeKind::Index, "OpIndex", &[]);
+
+    const CALL: OpCodeDef = OpCodeDef::new(OpCodeKind::Call, "OpCall", &[]);
+    const RETURN: OpCodeDef = OpCodeDef::new(OpCodeKind::ReturnValue, "OpReturnValue", &[]);
 }
 
 impl fmt::Display for OpCodeDef {

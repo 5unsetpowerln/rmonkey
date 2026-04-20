@@ -30,6 +30,7 @@ pub enum Object {
     Builtin(Arc<RwLock<Builtin>>),
     Array(Arc<RwLock<Array>>),
     Hash(Arc<RwLock<HashObject>>),
+    CompiledFunction(Arc<RwLock<CompiledFunction>>),
 }
 
 impl PartialEq for Object {
@@ -46,6 +47,9 @@ impl PartialEq for Object {
             (Object::Builtin(a), Object::Builtin(b)) => *a.read().unwrap() == *b.read().unwrap(),
             (Object::Array(a), Object::Array(b)) => *a.read().unwrap() == *b.read().unwrap(),
             (Object::Hash(a), Object::Hash(b)) => *a.read().unwrap() == *b.read().unwrap(),
+            (Object::CompiledFunction(a), Object::CompiledFunction(b)) => {
+                *a.read().unwrap() == *b.read().unwrap()
+            }
             _ => false,
         }
     }
@@ -65,6 +69,7 @@ impl Object {
             Object::Builtin(x) => x.clone(),
             Object::Array(x) => x.clone(),
             Object::Hash(x) => x.clone(),
+            Object::CompiledFunction(x) => x.clone(),
         }
     }
 
@@ -110,6 +115,10 @@ impl Object {
 
     pub fn ret_val(val: Arc<Object>) -> Self {
         Self::ReturnValue(Arc::new(RwLock::new(ReturnValue::new(val))))
+    }
+
+    pub fn compiled_function(instructions: &[u8]) -> Self {
+        Self::CompiledFunction(Arc::new(RwLock::new(CompiledFunction::new(instructions))))
     }
 
     pub fn is_returned(&self) -> bool {
@@ -479,6 +488,32 @@ impl Display for HashObject {
 impl ObjectInterface for HashObject {
     fn get_name(&self) -> String {
         "hash".to_string()
+    }
+}
+
+// Compiled Function
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledFunction {
+    pub instructions: Vec<u8>,
+}
+
+impl CompiledFunction {
+    pub fn new(instructions: &[u8]) -> Self {
+        Self {
+            instructions: instructions.to_vec(),
+        }
+    }
+}
+
+impl Display for CompiledFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.instructions)
+    }
+}
+
+impl ObjectInterface for CompiledFunction {
+    fn get_name(&self) -> String {
+        "compiled-function".to_string()
     }
 }
 

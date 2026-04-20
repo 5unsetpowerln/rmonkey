@@ -671,7 +671,7 @@ mod test {
                 .with_context(|| format!("test {} failed. failed to compile a program.", i))?;
 
             let bytecode = compiler.get_bytecode();
-            let mut vm = Vm::new(bytecode);
+            let mut vm = Vm::new(&bytecode);
             vm.run()
                 .with_context(|| format!("test {} failed. failed to run a bytecode.", i))?;
 

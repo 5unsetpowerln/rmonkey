@@ -57,7 +57,7 @@ pub fn start() {
         symbol_table = compiler.get_symbol_table();
         constants = bytecode.constants.clone();
 
-        let mut vm = Vm::new_with_global_store(bytecode, &globals);
+        let mut vm = Vm::new_with_global_store(&bytecode, &globals);
         if let Err(err) = vm.run() {
             print_errors("failed to run the program on the vm", err);
             continue;

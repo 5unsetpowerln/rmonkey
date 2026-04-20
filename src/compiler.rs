@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::ast::{BlockStatement, PrefixExpression};
 use crate::code::{OpCodeKind, create_inst};
-use crate::object::Object;
+use crate::object::{CompiledFunction, Object};
 use crate::symbol_table::{SymbolTable, create_symbol_table};
 use crate::{ast, object};
 
@@ -19,7 +19,7 @@ pub enum CompileError {
     UndefinedIdentifier { identifier: String },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ByteCode {
     pub instructions: Vec<u8>,
     pub constants: Vec<Arc<object::Object>>,
@@ -34,20 +34,39 @@ impl ByteCode {
     }
 }
 
-#[derive(Debug)]
-pub struct Compiler {
-    bytecode: ByteCode,
+#[derive(Debug, Clone)]
+pub struct CompilationScope {
+    insts: Vec<u8>,
     last_inst: Option<AddedInstruction>, // 最近追加された命令
     prev_inst: Option<AddedInstruction>, // その前に追加された命令
+}
+
+impl CompilationScope {
+    pub fn new() -> Self {
+        Self {
+            insts: Vec::new(),
+            last_inst: None,
+            prev_inst: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Compiler {
+    constants: Vec<Arc<Object>>,
+    scopes: Vec<CompilationScope>,
+    scope_idx: usize,
     symbol_table: SymbolTable,
 }
 
 impl Compiler {
     pub fn new() -> Self {
+        let scopes = vec![CompilationScope::new()];
+
         Self {
-            bytecode: ByteCode::new(),
-            last_inst: None,
-            prev_inst: None,
+            constants: Vec::new(),
+            scopes,
+            scope_idx: 0,
             symbol_table: create_symbol_table(),
         }
     }
@@ -55,7 +74,7 @@ impl Compiler {
     pub fn new_with_state(symbol_table: &SymbolTable, constants: &[Arc<Object>]) -> Self {
         let mut _self = Self::new();
 
-        _self.bytecode.constants = constants.to_vec();
+        _self.constants = constants.to_vec();
         _self.symbol_table = symbol_table.clone();
 
         _self
@@ -65,47 +84,76 @@ impl Compiler {
         self.symbol_table.clone()
     }
 
+    pub fn get_current_insts(&self) -> &[u8] {
+        let scope_idx = self.scope_idx;
+        &self.scopes[scope_idx].insts
+    }
+
     fn add_inst(&mut self, kind: OpCodeKind, operands: &[i64]) -> Result<usize> {
-        let position = self.bytecode.instructions.len();
+        let scope_idx = self.scope_idx;
+        let new_position = self.scopes[scope_idx].insts.len();
+        let inst = create_inst(kind, operands).context("failed to create an instruction")?;
 
-        self.bytecode.instructions.extend_from_slice(
-            create_inst(kind, operands)
-                .context("failed to create an instruction")?
-                .as_ref(),
-        );
+        self.scopes[scope_idx].insts.extend_from_slice(&inst);
 
-        self.set_last_inst(kind, position);
+        self.set_last_inst(kind, new_position);
 
-        Ok(position)
+        Ok(new_position)
+    }
+
+    fn enter_scope(&mut self) {
+        let scope = CompilationScope::new();
+        self.scopes.push(scope);
+        self.scope_idx += 1;
+    }
+
+    fn leave_scope(&mut self) -> Vec<u8> {
+        let scope = self.scopes.pop().unwrap();
+        self.scope_idx -= 1;
+
+        scope.insts
     }
 
     fn set_last_inst(&mut self, kind: OpCodeKind, position: usize) {
-        mem::swap(&mut self.last_inst, &mut self.prev_inst);
-        self.last_inst = Some(AddedInstruction::new(kind, position));
+        let scope_idx = self.scope_idx;
+        self.scopes[scope_idx].prev_inst = self.scopes[scope_idx].last_inst.clone();
+        self.scopes[scope_idx].last_inst = Some(AddedInstruction::new(kind, position));
     }
 
     fn last_inst_is(&self, kind: OpCodeKind) -> bool {
-        matches!(&self.last_inst, Some(kind))
+        let scope_idx = self.scope_idx;
+
+        if let Some(last_inst) = self.scopes[scope_idx].last_inst.as_ref() {
+            last_inst.kind == kind
+        } else {
+            false
+        }
     }
 
     fn remove_last_inst(&mut self) {
-        self.bytecode
-            .instructions
-            .truncate(self.last_inst.as_ref().unwrap().position);
-        mem::swap(&mut self.last_inst, &mut self.prev_inst);
-        self.prev_inst = None;
+        let scope_idx = self.scope_idx;
+        let last_inst_position = self.scopes[scope_idx].last_inst.as_ref().unwrap().position;
+        let prev_inst = self.scopes[scope_idx].prev_inst.clone();
+
+        self.scopes[scope_idx].insts.truncate(last_inst_position);
+        self.scopes[scope_idx].last_inst = prev_inst;
+        self.scopes[scope_idx].prev_inst = None;
     }
 
     fn replace_inst(&mut self, position: usize, inst: &[u8]) {
-        self.bytecode
-            .instructions
+        let scope_idx = self.scope_idx;
+
+        self.scopes[scope_idx]
+            .insts
             .get_mut(position..position + inst.len())
             .unwrap()
             .copy_from_slice(inst);
     }
 
     fn change_operands(&mut self, position: usize, operands: &[i64]) -> Result<()> {
-        let kind = OpCodeKind::from_u8(self.bytecode.instructions[position])
+        let scope_idx = self.scope_idx;
+
+        let kind = OpCodeKind::from_u8(self.scopes[scope_idx].insts[position])
             .context("failed to parse a byte as OpCodeKind.")?;
         let new_inst = create_inst(kind, operands).context("failed to create new instruction.")?;
         self.replace_inst(position, new_inst.as_ref());
@@ -114,8 +162,8 @@ impl Compiler {
 
     /// 定数を定数リストに追加し、追加された定数のインデックスを返す
     fn add_const(&mut self, obj: Arc<object::Object>) -> usize {
-        self.bytecode.constants.push(obj);
-        self.bytecode.constants.len() - 1
+        self.constants.push(obj);
+        self.constants.len() - 1
     }
 
     pub fn compile<T: ast::NodeInterface>(&mut self, node: &T) -> Result<()> {
@@ -286,7 +334,7 @@ impl Compiler {
                     .context("failed to add the jump instruction.")?;
 
                 // overwrite jump-not-truthy
-                let alternative_pos = self.bytecode.instructions.len();
+                let alternative_pos = self.get_current_insts().len();
                 self.change_operands(jump_not_truthy_pos, &[alternative_pos as i64])
                     .context("failed to change operands of the jump-not-truthy instruction.")?;
 
@@ -303,7 +351,7 @@ impl Compiler {
                 }
 
                 // overwrite jump
-                let end_pos = self.bytecode.instructions.len();
+                let end_pos = self.get_current_insts().len();
                 self.change_operands(jump_pos, &[end_pos as i64])
                     .context("failed to change operands of the jump instruction.")?;
             }
@@ -382,6 +430,20 @@ impl Compiler {
                 self.add_inst(OpCodeKind::Index, &[])
                     .context("failed to add the index instruction.")?;
             }
+
+            ast::Node::FunctionLiteral(func_literal) => {
+                self.enter_scope();
+
+                self.compile(&func_literal.body)
+                    .context("failed to compile the function block.")?;
+
+                let insts = self.leave_scope();
+                let const_idx = self.add_const(Arc::new(Object::compiled_function(&insts)));
+
+                self.add_inst(OpCodeKind::Constant, &[const_idx as i64])
+                    .context("failed to add the constant instruction.")?;
+            }
+
             _ => unimplemented!(),
         }
 
@@ -406,8 +468,11 @@ impl Compiler {
         Ok(())
     }
 
-    pub fn get_bytecode(&self) -> &ByteCode {
-        &self.bytecode
+    pub fn get_bytecode(&self) -> ByteCode {
+        ByteCode {
+            instructions: self.get_current_insts().to_vec(),
+            constants: self.constants.clone(),
+        }
     }
 }
 
@@ -426,7 +491,7 @@ impl AddedInstruction {
 mod test {
     use std::sync::Arc;
 
-    use anyhow::{Context, Result, bail};
+    use anyhow::{Context, Result, anyhow, bail};
 
     use crate::ast::Program;
     use crate::code::{OpCodeKind, create_inst, insts_from_inst_list};
@@ -436,7 +501,10 @@ mod test {
     use crate::object::Object;
     use crate::parser::Parser;
     use crate::symbol_table::reset_symbol_count;
+    use crate::utils::flatten_u8;
     use crate::utils::print_errors;
+
+    use super::ByteCode;
 
     struct CompilerTestCase {
         input: String,
@@ -453,6 +521,102 @@ mod test {
                 expected_consts: expected_consts.to_vec(),
                 expected_insts,
             }
+        }
+    }
+
+    #[test]
+    fn test_compiler_scopes() {
+        let mut compiler = Compiler::new();
+
+        let check_scope_idx = |expected: usize, got: usize| {
+            if expected != got {
+                panic!("scope_idx is wrong. expected: {}, got: {}", expected, got);
+            }
+        };
+
+        let check_scope_insts_len = |idx: usize, len: usize, c: &mut Compiler| {
+            if c.scopes[idx].insts.len() != len {
+                panic!(
+                    "wrong instruction length. expected: {}, got: {}",
+                    len,
+                    c.scopes[c.scope_idx].insts.len()
+                );
+            }
+        };
+
+        check_scope_idx(0, compiler.scope_idx);
+
+        compiler.add_inst(OpCodeKind::Mul, &[]);
+
+        compiler.enter_scope();
+
+        check_scope_idx(1, compiler.scope_idx);
+
+        compiler.add_inst(OpCodeKind::Sub, &[]);
+
+        check_scope_insts_len(compiler.scope_idx, 1, &mut compiler);
+
+        if compiler.scopes[compiler.scope_idx]
+            .last_inst
+            .as_ref()
+            .unwrap()
+            .kind
+            != OpCodeKind::Sub
+        {
+            panic!(
+                "wrong instruction. expected: {:?}, got: {:?}",
+                OpCodeKind::Sub,
+                compiler.scopes[compiler.scope_idx]
+                    .last_inst
+                    .as_ref()
+                    .unwrap()
+                    .kind
+            );
+        }
+
+        compiler.leave_scope();
+
+        check_scope_idx(0, compiler.scope_idx);
+
+        compiler.add_inst(OpCodeKind::Add, &[]);
+
+        let scope_idx = compiler.scope_idx;
+        check_scope_insts_len(scope_idx, 2, &mut compiler);
+
+        if compiler.scopes[compiler.scope_idx]
+            .last_inst
+            .as_ref()
+            .unwrap()
+            .kind
+            != OpCodeKind::Add
+        {
+            panic!(
+                "wrong instruction. expected: {:?}, got: {:?}",
+                OpCodeKind::Sub,
+                compiler.scopes[compiler.scope_idx]
+                    .last_inst
+                    .as_ref()
+                    .unwrap()
+                    .kind
+            );
+        }
+
+        if compiler.scopes[compiler.scope_idx]
+            .prev_inst
+            .as_ref()
+            .unwrap()
+            .kind
+            != OpCodeKind::Mul
+        {
+            panic!(
+                "wrong instruction. expected: {:?}, got: {:?}",
+                OpCodeKind::Sub,
+                compiler.scopes[compiler.scope_idx]
+                    .prev_inst
+                    .as_ref()
+                    .unwrap()
+                    .kind
+            );
         }
     }
 
@@ -552,6 +716,21 @@ mod test {
                 Object::String(expected_str_obj) => {
                     test_string_object(expected_str_obj.read().unwrap().value.as_str(), &actual[i])
                         .with_context(|| format!("constant {} failed", i))?;
+                }
+
+                Object::CompiledFunction(expected_compiled_function) => {
+                    if let Object::CompiledFunction(actual_compiled_function) = actual[i].as_ref() {
+                        test_insts(
+                            &expected_compiled_function.read().unwrap().instructions,
+                            &actual_compiled_function.read().unwrap().instructions,
+                        )
+                        .with_context(|| format!("constant {} failed.", i))?;
+                    } else {
+                        bail!(anyhow!(
+                            "constant {} failed. the object is not compiled function.",
+                            i
+                        ));
+                    }
                 }
 
                 _ => unimplemented!(),
@@ -1034,5 +1213,60 @@ mod test {
                 ],
             ),
         ];
+    }
+
+    fn compile_expression(input: &str) -> ByteCode {
+        let program = parse(input).unwrap();
+
+        let mut compiler = Compiler::new();
+        compiler.compile(&program).unwrap();
+
+        // 入力がexpression statementであると仮定して、最後のpopを削除する
+        compiler.remove_last_inst();
+        let bytecode = compiler.get_bytecode();
+
+        bytecode.clone()
+    }
+
+    #[test]
+    fn test_functions() {
+        let tests = [
+            CompilerTestCase::new(
+                "fn() { return 5 + 10 }",
+                &[
+                    Object::int(5),
+                    Object::int(10),
+                    Object::compiled_function(&flatten_u8(vec![
+                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                        create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                        create_inst(OpCodeKind::Add, &[]).unwrap(),
+                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                    ])),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "fn() { 1; 2 }",
+                &[
+                    Object::int(1),
+                    Object::int(2),
+                    Object::compiled_function(&flatten_u8(vec![
+                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                        create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                        create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                    ])),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
     }
 }
