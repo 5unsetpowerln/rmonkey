@@ -150,6 +150,17 @@ impl Compiler {
             .copy_from_slice(inst);
     }
 
+    fn replace_last_inst(&mut self, kind: OpCodeKind, operands: &[i64]) -> Result<()> {
+        let scope_idx = self.scope_idx;
+        let inst = create_inst(kind, operands).context("failed to create the new instruction.")?;
+        let last_position = self.scopes[scope_idx].last_inst.as_ref().unwrap().position;
+
+        self.replace_inst(last_position, &inst);
+        self.scopes[scope_idx].last_inst = Some(AddedInstruction::new(kind, last_position));
+
+        Ok(())
+    }
+
     fn change_operands(&mut self, position: usize, operands: &[i64]) -> Result<()> {
         let scope_idx = self.scope_idx;
 
@@ -437,11 +448,37 @@ impl Compiler {
                 self.compile(&func_literal.body)
                     .context("failed to compile the function block.")?;
 
+                if self.last_inst_is(OpCodeKind::Pop) {
+                    self.replace_last_inst(OpCodeKind::ReturnValue, &[])
+                        .context("failed to replace the last instruction pop to return-value.")?;
+                }
+
+                // if !self.last_inst_is(OpCodeKind::ReturnValue) {
+                //     self.add_inst(OpCodeKind::Return, &[])
+                //         .context("failed to add the return instruction.")?;
+                // }
+
                 let insts = self.leave_scope();
                 let const_idx = self.add_const(Arc::new(Object::compiled_function(&insts)));
 
                 self.add_inst(OpCodeKind::Constant, &[const_idx as i64])
                     .context("failed to add the constant instruction.")?;
+            }
+
+            ast::Node::ReturnStatement(ret_stmt) => {
+                self.compile(&ret_stmt.value)
+                    .context("failed to compile the return value.")?;
+
+                self.add_inst(OpCodeKind::ReturnValue, &[])
+                    .context("failed to add the return-value instruction.")?;
+            }
+
+            ast::Node::CallExpression(call_expr) => {
+                self.compile(call_expr.func.as_ref())
+                    .context("failed to call the function expression.")?;
+
+                self.add_inst(OpCodeKind::Call, &[])
+                    .context("failed to add the call instruction.")?;
             }
 
             _ => unimplemented!(),
@@ -451,7 +488,6 @@ impl Compiler {
     }
 
     fn compile_block_statement(&mut self, block_stmt: &BlockStatement) -> Result<()> {
-        // block statementに文が一つも含まれない場合に何が評価されるのかが本を見てもわからなかったため、nullを評価する文を自動で追加するようにした
         if block_stmt.statements.is_empty() {
             self.add_inst(OpCodeKind::Null, &[])
                 .context("failed to add a null instruction.")?;
@@ -1265,8 +1301,60 @@ mod test {
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
+            CompilerTestCase::new(
+                "fn() {}",
+                &[Object::compiled_function(&flatten_u8(vec![
+                    create_inst(OpCodeKind::Null, &[]).unwrap(),
+                    create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                ]))],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
         ];
 
         run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_function_calls() {
+        let tests = [
+            CompilerTestCase::new(
+                "fn() {24}();",
+                &[
+                    Object::int(24),
+                    Object::compiled_function(&flatten_u8(vec![
+                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                    ])),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+            let noArg = fn() { 24 };
+            noArg();
+            ",
+                &[
+                    Object::int(24),
+                    Object::compiled_function(&flatten_u8(vec![
+                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                    ])),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
     }
 }

@@ -93,7 +93,7 @@ impl OpCodeDef {
             OpCodeKind::Hash => &Self::HASH,
             OpCodeKind::Index => &Self::INDEX,
             OpCodeKind::Call => &Self::CALL,
-            OpCodeKind::ReturnValue => &Self::RETURN,
+            OpCodeKind::ReturnValue => &Self::RETURN_VALUE,
         }
     }
 
@@ -134,7 +134,7 @@ impl OpCodeDef {
     const INDEX: OpCodeDef = OpCodeDef::new(OpCodeKind::Index, "OpIndex", &[]);
 
     const CALL: OpCodeDef = OpCodeDef::new(OpCodeKind::Call, "OpCall", &[]);
-    const RETURN: OpCodeDef = OpCodeDef::new(OpCodeKind::ReturnValue, "OpReturnValue", &[]);
+    const RETURN_VALUE: OpCodeDef = OpCodeDef::new(OpCodeKind::ReturnValue, "OpReturnValue", &[]);
 }
 
 impl fmt::Display for OpCodeDef {

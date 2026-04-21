@@ -8,7 +8,9 @@ use thiserror::Error;
 
 use crate::code::OpCodeKind;
 use crate::compiler::ByteCode;
-use crate::object::{BoolObject, HashKeyObject, HashObject, IntegerObject, Object, StringObject};
+use crate::object::{
+    BoolObject, CompiledFunction, HashKeyObject, HashObject, IntegerObject, Object, StringObject,
+};
 use crate::utils::u16_from_be_bytes;
 
 const STACK_SIZE: usize = 2048;
@@ -59,6 +61,9 @@ pub enum RuntimeError {
 
     #[error("`{index}` can not be index.")]
     UnsupportedIndexOfIndexOperation { target: String, index: String },
+
+    #[error("`{value}` is not callable")]
+    NotCallble { value: Object },
 }
 
 static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
@@ -66,32 +71,55 @@ static FALSE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(fal
 static NULL: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::null()));
 
 pub const GLOBAL_SIZE: usize = 65536;
+pub const FRAME_SIZE: usize = 1024;
+
+pub struct Frame {
+    func: CompiledFunction,
+    ip: usize,
+}
+
+impl Frame {
+    fn new(func: &CompiledFunction) -> Self {
+        Self {
+            func: func.clone(),
+            ip: 0,
+        }
+    }
+
+    fn insts(&self) -> Vec<u8> {
+        self.func.instructions.clone()
+    }
+}
 
 pub struct Vm {
     constants: Vec<Arc<Object>>,
-    instructions: Vec<u8>,
     stack: Vec<Arc<Object>>,
     sp: usize,
     last_stack_top: Option<Arc<Object>>,
     globals: Vec<Option<Arc<Object>>>,
-    ip: usize,
+    frames: Vec<Frame>,
+    frame_idx: usize,
 }
 
 impl Vm {
     pub fn new(bytecode: &ByteCode) -> Self {
+        let main_fn = CompiledFunction::new(&bytecode.instructions);
+        let main_frame = Frame::new(&main_fn);
+
+        let mut frames = Vec::with_capacity(FRAME_SIZE);
+        frames.push(main_frame);
+
         let mut stack = Vec::with_capacity(STACK_SIZE);
         stack.resize(STACK_SIZE, Arc::new(Object::null()));
 
-        let globals = (0..GLOBAL_SIZE).map(|_| None).collect();
-
         Self {
             constants: bytecode.constants.clone(),
-            instructions: bytecode.instructions.clone(),
             stack,
             sp: 0,
-            ip: 0,
             last_stack_top: None,
-            globals,
+            globals: (0..GLOBAL_SIZE).map(|_| None).collect(),
+            frames,
+            frame_idx: 1,
         }
     }
 
@@ -104,30 +132,48 @@ impl Vm {
         _self
     }
 
+    pub fn push_frame(&mut self, frame: Frame) {
+        self.frames.push(frame);
+        self.frame_idx += 1;
+    }
+
+    pub fn pop_frame(&mut self) -> Frame {
+        let frame = self.frames.pop().unwrap();
+        self.frame_idx -= 1;
+        frame
+    }
+
+    pub fn current_frame_mut(&mut self) -> &mut Frame {
+        self.frames.get_mut(self.frame_idx - 1).unwrap()
+    }
+
+    pub fn current_frame(&self) -> &Frame {
+        self.frames.get(self.frame_idx - 1).unwrap()
+    }
+
     pub fn get_globals(&self) -> Vec<Option<Arc<Object>>> {
         self.globals.clone()
     }
 
     // ipからnバイト読んで、ipをnバイト進める
-    fn read_n(&mut self, n: usize) -> Result<&[u8]> {
-        let opt = self.instructions.get(self.ip..self.ip + n);
+    fn read_n(&mut self, n: usize) -> Result<Vec<u8>> {
+        let ip = self.current_frame().ip;
+        let insts = self.current_frame().insts();
 
-        self.ip += n;
+        self.current_frame_mut().ip += n;
 
-        if let Some(x) = opt {
-            Ok(x)
+        if let Some(x) = insts.get(ip..ip + n) {
+            Ok(x.to_vec())
         } else {
             bail!(RuntimeError::InstructionPointerOverflow {
-                inst_length: self.instructions.len(),
-                inst_pointer: self.ip + n
+                inst_length: self.current_frame().insts().len(),
+                inst_pointer: self.current_frame().ip + n
             });
         }
     }
 
     pub fn run(&mut self) -> Result<()> {
-        self.ip = 0;
-
-        while self.ip < self.instructions.len() {
+        while self.current_frame().ip < self.current_frame().insts().len() {
             // 命令の取得
             let op_kind = {
                 let byte = self.read_n(1)?[0];
@@ -146,7 +192,7 @@ impl Vm {
                     let raw_operands = self.read_n(2)?;
 
                     //// 上の処理で幅が2であることは確定済みなのでunwrapしても良い
-                    let const_idx = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    let const_idx = u16_from_be_bytes(&raw_operands).unwrap() as usize;
 
                     // 定数を取得する
                     let const_value = match self.constants.get(const_idx) {
@@ -248,25 +294,25 @@ impl Vm {
                 OpCodeKind::Jump => {
                     let raw_operands = self.read_n(2)?;
 
-                    let pos = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    let pos = u16_from_be_bytes(&raw_operands).unwrap() as usize;
 
-                    self.ip = pos;
+                    self.current_frame_mut().ip = pos;
                 }
 
                 OpCodeKind::JumpNotTruthy => {
                     let raw_operands = self.read_n(2)?;
 
-                    let pos = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    let pos = u16_from_be_bytes(&raw_operands).unwrap() as usize;
 
                     let condition = self.pop().context("failed to pop the condition.")?;
                     if !condition.is_truthy() {
-                        self.ip = pos;
+                        self.current_frame_mut().ip = pos;
                     }
                 }
 
                 OpCodeKind::SetGlobal => {
                     let raw_operands = self.read_n(2)?;
-                    let global_idx = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    let global_idx = u16_from_be_bytes(&raw_operands).unwrap() as usize;
 
                     let value = self.pop().context("failed to pop the value.")?;
 
@@ -275,7 +321,7 @@ impl Vm {
 
                 OpCodeKind::GetGlobal => {
                     let raw_operands = self.read_n(2)?;
-                    let global_idx = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    let global_idx = u16_from_be_bytes(&raw_operands).unwrap() as usize;
 
                     let value = if let Some(x) = self.globals[global_idx].as_ref() {
                         x.clone()
@@ -288,7 +334,7 @@ impl Vm {
 
                 OpCodeKind::Array => {
                     let raw_operands = self.read_n(2)?;
-                    let size = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    let size = u16_from_be_bytes(&raw_operands).unwrap() as usize;
 
                     let array = self.build_array(self.sp - size, self.sp);
                     self.sp -= size;
@@ -298,7 +344,7 @@ impl Vm {
 
                 OpCodeKind::Hash => {
                     let raw_operands = self.read_n(2)?;
-                    let raw_size = u16_from_be_bytes(raw_operands).unwrap() as usize;
+                    let raw_size = u16_from_be_bytes(&raw_operands).unwrap() as usize;
 
                     let hash_obj = self
                         .build_hash(self.sp - raw_size, self.sp)
@@ -317,7 +363,40 @@ impl Vm {
                         .context("failed to execute the index operation.")?;
                 }
 
-                _ => unimplemented!(),
+                OpCodeKind::Call => {
+                    let stack_top = self
+                        .stack_top()
+                        .context("failed to get the compiled function.")?;
+
+                    let func = if let Object::CompiledFunction(f) = stack_top.as_ref() {
+                        f
+                    } else {
+                        bail!(RuntimeError::NotCallble {
+                            value: stack_top.as_ref().clone()
+                        });
+                    };
+
+                    let func = &*func.read().unwrap();
+
+                    let frame = Frame::new(func);
+
+                    self.push_frame(frame);
+                }
+
+                OpCodeKind::ReturnValue => {
+                    let return_value = self.pop().context("failed to pop the return value.")?;
+
+                    self.pop_frame();
+                    self.pop()
+                        .context("failed to remove the function from the stack.")?;
+
+                    self.push(return_value)
+                        .context("failed to push the return value.")?;
+                }
+
+                _ => {
+                    panic!("{:?} is not implemented", op_kind);
+                } // _ => unimplemented!(),
             }
         }
 
@@ -972,6 +1051,84 @@ mod test {
             VmTestCase::new("{1: 1, 2: 2}[2]", Object::int(2)),
             VmTestCase::new("{1: 1}[0]", Object::null()),
             VmTestCase::new("{}[0]", Object::null()),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_calling_function_without_arguments() {
+        let tests = [
+            VmTestCase::new(
+                "
+                let fivePlusTen = fn() { 5 + 10; };
+                fivePlusTen();
+                ",
+                Object::int(15),
+            ),
+            VmTestCase::new(
+                "
+                let one = fn() { 1; };
+                let two = fn() { 2; };
+                one() + two()
+                ",
+                Object::int(3),
+            ),
+            VmTestCase::new(
+                "
+                let a = fn() { 1 };
+                let b = fn() { a() + 1 };
+                let c = fn() { b() + 1 };
+                c();
+                ",
+                Object::int(3),
+            ),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_functions_with_return_value() {
+        let tests = [
+            VmTestCase::new(
+                "
+                let earlyExit = fn() { return 99; 100; };
+                earlyExit();
+                ",
+                Object::int(99),
+            ),
+            VmTestCase::new(
+                "
+                let earlyExit = fn() { return 99; return 100; };
+                earlyExit();
+                ",
+                Object::int(99),
+            ),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_functions_without_return_value() {
+        let tests = [
+            VmTestCase::new(
+                "
+                let noReturn = fn() { };
+                noReturn();
+                ",
+                Object::null(),
+            ),
+            VmTestCase::new(
+                "
+                let noReturn = fn() { };
+                let noReturnTwo = fn() { noReturn(); };
+                noReturn();
+                noReturnTwo();
+                ",
+                Object::null(),
+            ),
         ];
 
         run_vm_tests(&tests).expect("a vm test failed.");
