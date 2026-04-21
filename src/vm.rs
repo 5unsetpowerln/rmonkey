@@ -1133,4 +1133,16 @@ mod test {
 
         run_vm_tests(&tests).expect("a vm test failed.");
     }
+
+    #[test]
+    fn test_first_class_functions() {
+        let tests = [VmTestCase::new(
+            "
+                let returnsOne = fn() { 1; };
+                let returnsOneReturner = fn() { returnsOne; };
+                returnsOneReturner()();
+            ",
+            Object::int(1),
+        )];
+    }
 }
