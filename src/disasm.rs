@@ -96,14 +96,16 @@ mod test {
     fn test_disasm() {
         let insts = insts_from_inst_list(&[
             create_inst(OpCodeKind::Add, &[]).unwrap(),
+            create_inst(OpCodeKind::GetLocal, &[1]).unwrap(),
             create_inst(OpCodeKind::Constant, &[2]).unwrap(),
             create_inst(OpCodeKind::Constant, &[65535]).unwrap(),
         ]);
 
         let expected = "\
 0000 OpAdd
-0001 OpConstant 2
-0004 OpConstant 65535
+0001 OpGetLocal 1
+0003 OpConstant 2
+0006 OpConstant 65535
 ";
 
         assert_eq!(disasm(&insts), expected);

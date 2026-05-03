@@ -1,5 +1,5 @@
 use std::mem;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result, bail};
 use thiserror::Error;
@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::ast::{BlockStatement, PrefixExpression};
 use crate::code::{OpCodeKind, create_inst};
 use crate::object::{CompiledFunction, Object};
-use crate::symbol_table::{SymbolTable, create_symbol_table};
+use crate::symbol_table::{GLOBAL_SCOPE, Symbol, SymbolTable};
 use crate::{ast, object};
 
 #[derive(Debug, Error)]
@@ -67,7 +67,7 @@ impl Compiler {
             constants: Vec::new(),
             scopes,
             scope_idx: 0,
-            symbol_table: create_symbol_table(),
+            symbol_table: SymbolTable::new(),
         }
     }
 
@@ -105,11 +105,16 @@ impl Compiler {
         let scope = CompilationScope::new();
         self.scopes.push(scope);
         self.scope_idx += 1;
+
+        let current_symbol_table = self.symbol_table.clone();
+        self.symbol_table = SymbolTable::new_enclosed(Arc::new(RwLock::new(current_symbol_table)));
     }
 
     fn leave_scope(&mut self) -> Vec<u8> {
         let scope = self.scopes.pop().unwrap();
         self.scope_idx -= 1;
+
+        self.symbol_table = self.symbol_table.outer().unwrap();
 
         scope.insts
     }
@@ -201,8 +206,14 @@ impl Compiler {
                 self.compile(&let_stmt.value)
                     .context("failed to compile the value.")?;
                 let symbol = self.symbol_table.define(&let_stmt.name.value);
-                self.add_inst(OpCodeKind::SetGlobal, &[symbol.index as i64])
-                    .context("failed to add the set-global instruction.")?;
+
+                if symbol.scope == GLOBAL_SCOPE {
+                    self.add_inst(OpCodeKind::SetGlobal, &[symbol.index as i64])
+                        .context("failed to add the set-global instruction.")?;
+                } else {
+                    self.add_inst(OpCodeKind::SetLocal, &[symbol.index as i64])
+                        .context("failed to add the set-local instruction.")?;
+                }
             }
 
             ast::Node::ExpressionStatement(expr_stmt) => {
@@ -407,8 +418,13 @@ impl Compiler {
                     }),
                 };
 
-                self.add_inst(OpCodeKind::GetGlobal, &[symbol.index as i64])
-                    .context("failed to add the get-global instruction.")?;
+                if symbol.scope == GLOBAL_SCOPE {
+                    self.add_inst(OpCodeKind::GetGlobal, &[symbol.index as i64])
+                        .context("failed to add the get-global instruction.")?;
+                } else {
+                    self.add_inst(OpCodeKind::GetLocal, &[symbol.index as i64])
+                        .context("failed to add the get-local instruction.")?;
+                }
             }
 
             ast::Node::ArrayLiteral(array_literal) => {
@@ -453,13 +469,11 @@ impl Compiler {
                         .context("failed to replace the last instruction pop to return-value.")?;
                 }
 
-                // if !self.last_inst_is(OpCodeKind::ReturnValue) {
-                //     self.add_inst(OpCodeKind::Return, &[])
-                //         .context("failed to add the return instruction.")?;
-                // }
+                let local_count = self.symbol_table.def_count();
 
                 let insts = self.leave_scope();
-                let const_idx = self.add_const(Arc::new(Object::compiled_function(&insts)));
+                let const_idx =
+                    self.add_const(Arc::new(Object::compiled_function(&insts, local_count)));
 
                 self.add_inst(OpCodeKind::Constant, &[const_idx as i64])
                     .context("failed to add the constant instruction.")?;
@@ -536,11 +550,11 @@ mod test {
     use crate::lexer::Lexer;
     use crate::object::Object;
     use crate::parser::Parser;
-    use crate::symbol_table::reset_symbol_count;
+    use crate::symbol_table::{GLOBAL_SCOPE, Symbol};
     use crate::utils::flatten_u8;
     use crate::utils::print_errors;
 
-    use super::ByteCode;
+    use super::{AddedInstruction, ByteCode};
 
     struct CompilerTestCase {
         input: String,
@@ -564,6 +578,8 @@ mod test {
     fn test_compiler_scopes() {
         let mut compiler = Compiler::new();
 
+        let global_symbol_table = compiler.symbol_table.clone();
+
         let check_scope_idx = |expected: usize, got: usize| {
             if expected != got {
                 panic!("scope_idx is wrong. expected: {}, got: {}", expected, got);
@@ -580,6 +596,16 @@ mod test {
             }
         };
 
+        let check_inst = |got: Option<&AddedInstruction>, expected: OpCodeKind| {
+            if !matches!(got.unwrap().kind, expected) {
+                panic!(
+                    "wrong instruction. expected: {:?}, got: {:?}",
+                    expected,
+                    got.unwrap().kind
+                );
+            }
+        };
+
         check_scope_idx(0, compiler.scope_idx);
 
         compiler.add_inst(OpCodeKind::Mul, &[]);
@@ -590,77 +616,47 @@ mod test {
 
         compiler.add_inst(OpCodeKind::Sub, &[]);
 
+        if compiler.symbol_table.outer().unwrap() != global_symbol_table {
+            panic!("compiler didn't enclose symbol table.");
+        }
+
         check_scope_insts_len(compiler.scope_idx, 1, &mut compiler);
 
-        if compiler.scopes[compiler.scope_idx]
-            .last_inst
-            .as_ref()
-            .unwrap()
-            .kind
-            != OpCodeKind::Sub
-        {
-            panic!(
-                "wrong instruction. expected: {:?}, got: {:?}",
-                OpCodeKind::Sub,
-                compiler.scopes[compiler.scope_idx]
-                    .last_inst
-                    .as_ref()
-                    .unwrap()
-                    .kind
-            );
-        }
+        check_inst(
+            compiler.scopes[compiler.scope_idx].last_inst.as_ref(),
+            OpCodeKind::Sub,
+        );
 
         compiler.leave_scope();
 
         check_scope_idx(0, compiler.scope_idx);
+
+        if compiler.symbol_table != global_symbol_table {
+            panic!("compiler didn't restore global symbol table.");
+        }
+
+        if compiler.symbol_table.outer().is_some() {
+            panic!("compiler modified global symbol table incorrectly.");
+        }
 
         compiler.add_inst(OpCodeKind::Add, &[]);
 
         let scope_idx = compiler.scope_idx;
         check_scope_insts_len(scope_idx, 2, &mut compiler);
 
-        if compiler.scopes[compiler.scope_idx]
-            .last_inst
-            .as_ref()
-            .unwrap()
-            .kind
-            != OpCodeKind::Add
-        {
-            panic!(
-                "wrong instruction. expected: {:?}, got: {:?}",
-                OpCodeKind::Sub,
-                compiler.scopes[compiler.scope_idx]
-                    .last_inst
-                    .as_ref()
-                    .unwrap()
-                    .kind
-            );
-        }
+        check_inst(
+            compiler.scopes[compiler.scope_idx].last_inst.as_ref(),
+            OpCodeKind::Add,
+        );
 
-        if compiler.scopes[compiler.scope_idx]
-            .prev_inst
-            .as_ref()
-            .unwrap()
-            .kind
-            != OpCodeKind::Mul
-        {
-            panic!(
-                "wrong instruction. expected: {:?}, got: {:?}",
-                OpCodeKind::Sub,
-                compiler.scopes[compiler.scope_idx]
-                    .prev_inst
-                    .as_ref()
-                    .unwrap()
-                    .kind
-            );
-        }
+        check_inst(
+            compiler.scopes[compiler.scope_idx].prev_inst.as_ref(),
+            OpCodeKind::Mul,
+        );
     }
 
     fn run_compiler_tests(tests: &[CompilerTestCase]) {
         for (i, test) in tests.iter().enumerate() {
-            unsafe {
-                reset_symbol_count();
-            }
             println!("testing {}", i);
 
             let program = parse(&test.input).unwrap_or_else(|err| {
@@ -1272,12 +1268,15 @@ mod test {
                 &[
                     Object::int(5),
                     Object::int(10),
-                    Object::compiled_function(&flatten_u8(vec![
-                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
-                        create_inst(OpCodeKind::Constant, &[1]).unwrap(),
-                        create_inst(OpCodeKind::Add, &[]).unwrap(),
-                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
-                    ])),
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                            create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                            create_inst(OpCodeKind::Add, &[]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                    ),
                 ],
                 &[
                     create_inst(OpCodeKind::Constant, &[2]).unwrap(),
@@ -1289,12 +1288,15 @@ mod test {
                 &[
                     Object::int(1),
                     Object::int(2),
-                    Object::compiled_function(&flatten_u8(vec![
-                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
-                        create_inst(OpCodeKind::Pop, &[]).unwrap(),
-                        create_inst(OpCodeKind::Constant, &[1]).unwrap(),
-                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
-                    ])),
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                            create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                            create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                    ),
                 ],
                 &[
                     create_inst(OpCodeKind::Constant, &[2]).unwrap(),
@@ -1303,10 +1305,13 @@ mod test {
             ),
             CompilerTestCase::new(
                 "fn() {}",
-                &[Object::compiled_function(&flatten_u8(vec![
-                    create_inst(OpCodeKind::Null, &[]).unwrap(),
-                    create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
-                ]))],
+                &[Object::compiled_function(
+                    &flatten_u8(vec![
+                        create_inst(OpCodeKind::Null, &[]).unwrap(),
+                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                    ]),
+                    0,
+                )],
                 &[
                     create_inst(OpCodeKind::Constant, &[0]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
@@ -1324,10 +1329,13 @@ mod test {
                 "fn() {24}();",
                 &[
                     Object::int(24),
-                    Object::compiled_function(&flatten_u8(vec![
-                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
-                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
-                    ])),
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                    ),
                 ],
                 &[
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
@@ -1342,10 +1350,13 @@ mod test {
             ",
                 &[
                     Object::int(24),
-                    Object::compiled_function(&flatten_u8(vec![
-                        create_inst(OpCodeKind::Constant, &[0]).unwrap(),
-                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
-                    ])),
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                    ),
                 ],
                 &[
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
@@ -1356,5 +1367,86 @@ mod test {
                 ],
             ),
         ];
+    }
+
+    #[test]
+    fn test_let_statement_scopes() {
+        let tests = [
+            CompilerTestCase::new(
+                "
+                let num = 55;
+                fn() { num }",
+                &[
+                    Object::int(55),
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                    ),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+            fn() {
+                let num = 55;
+                num
+            }
+            ",
+                &[
+                    Object::int(55),
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                            create_inst(OpCodeKind::SetLocal, &[0]).unwrap(),
+                            create_inst(OpCodeKind::GetLocal, &[0]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        1,
+                    ),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+                fn() {
+                let a = 55;
+                let b = 77; a + b
+            }",
+                &[
+                    Object::int(55),
+                    Object::int(77),
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                            create_inst(OpCodeKind::SetLocal, &[0]).unwrap(),
+                            create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                            create_inst(OpCodeKind::SetLocal, &[1]).unwrap(),
+                            create_inst(OpCodeKind::GetLocal, &[0]).unwrap(),
+                            create_inst(OpCodeKind::GetLocal, &[1]).unwrap(),
+                            create_inst(OpCodeKind::Add, &[]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        2,
+                    ),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
     }
 }

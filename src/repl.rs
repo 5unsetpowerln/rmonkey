@@ -22,7 +22,7 @@ pub fn start() {
         .map(|_| None)
         .collect::<Vec<Option<Arc<Object>>>>()
         .to_vec();
-    let mut symbol_table = symbol_table::create_symbol_table();
+    let mut symbol_table = symbol_table::SymbolTable::new();
     let mut constants = Vec::new();
 
     loop {

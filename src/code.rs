@@ -47,6 +47,8 @@ pub enum OpCodeKind {
     Index,
     Call,
     ReturnValue,
+    SetLocal,
+    GetLocal,
 }
 
 #[derive(Debug)]
@@ -94,6 +96,8 @@ impl OpCodeDef {
             OpCodeKind::Index => &Self::INDEX,
             OpCodeKind::Call => &Self::CALL,
             OpCodeKind::ReturnValue => &Self::RETURN_VALUE,
+            OpCodeKind::GetLocal => &Self::GET_LOCAL,
+            OpCodeKind::SetLocal => &Self::SET_LOCAL,
         }
     }
 
@@ -135,6 +139,9 @@ impl OpCodeDef {
 
     const CALL: OpCodeDef = OpCodeDef::new(OpCodeKind::Call, "OpCall", &[]);
     const RETURN_VALUE: OpCodeDef = OpCodeDef::new(OpCodeKind::ReturnValue, "OpReturnValue", &[]);
+
+    const GET_LOCAL: OpCodeDef = OpCodeDef::new(OpCodeKind::GetLocal, "OpGetLocal", &[1]);
+    const SET_LOCAL: OpCodeDef = OpCodeDef::new(OpCodeKind::SetLocal, "OpSetLocal", &[1]);
 }
 
 impl fmt::Display for OpCodeDef {
@@ -170,6 +177,9 @@ pub fn create_inst(kind: OpCodeKind, operands: &[i64]) -> Result<Vec<u8>> {
         match w {
             2 => {
                 inst.extend_from_slice(&(*o as u16).to_be_bytes());
+            }
+            1 => {
+                inst.push(*o as u8);
             }
             _ => {
                 unimplemented!();
@@ -219,6 +229,11 @@ mod test {
                 &[OpCodeKind::Constant as u8, 0xff, 0xfe],
             ),
             TestCase::new(OpCodeKind::Add, &[], &[OpCodeKind::Add as u8]),
+            TestCase::new(
+                OpCodeKind::GetLocal,
+                &[255],
+                &[OpCodeKind::GetLocal as u8, 255],
+            ),
         ];
 
         for (i, test) in tests.iter().enumerate() {

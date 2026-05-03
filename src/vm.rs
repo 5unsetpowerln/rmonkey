@@ -76,13 +76,15 @@ pub const FRAME_SIZE: usize = 1024;
 pub struct Frame {
     func: CompiledFunction,
     ip: usize,
+    base_ptr: usize,
 }
 
 impl Frame {
-    fn new(func: &CompiledFunction) -> Self {
+    fn new(func: &CompiledFunction, base_ptr: usize) -> Self {
         Self {
             func: func.clone(),
             ip: 0,
+            base_ptr,
         }
     }
 
@@ -103,8 +105,8 @@ pub struct Vm {
 
 impl Vm {
     pub fn new(bytecode: &ByteCode) -> Self {
-        let main_fn = CompiledFunction::new(&bytecode.instructions);
-        let main_frame = Frame::new(&main_fn);
+        let main_fn = CompiledFunction::new(&bytecode.instructions, 0);
+        let main_frame = Frame::new(&main_fn, 0);
 
         let mut frames = Vec::with_capacity(FRAME_SIZE);
         frames.push(main_frame);
@@ -313,10 +315,17 @@ impl Vm {
                 OpCodeKind::SetGlobal => {
                     let raw_operands = self.read_n(2)?;
                     let global_idx = u16_from_be_bytes(&raw_operands).unwrap() as usize;
-
                     let value = self.pop().context("failed to pop the value.")?;
 
                     self.globals[global_idx].replace(value);
+                }
+
+                OpCodeKind::SetLocal => {
+                    let local_idx = self.read_n(1)?[0] as usize;
+                    let value = self.pop().context("failed to pop the value.")?;
+                    let base_ptr = self.current_frame().base_ptr;
+
+                    self.stack[base_ptr + local_idx] = value;
                 }
 
                 OpCodeKind::GetGlobal => {
@@ -328,6 +337,14 @@ impl Vm {
                     } else {
                         bail!(RuntimeError::UndefinedVariable { idx: global_idx })
                     };
+
+                    self.push(value).context("failed to push the value")?;
+                }
+
+                OpCodeKind::GetLocal => {
+                    let local_idx = self.read_n(1)?[0] as usize;
+                    let base_ptr = self.current_frame().base_ptr;
+                    let value = self.stack[base_ptr + local_idx].clone();
 
                     self.push(value).context("failed to push the value")?;
                 }
@@ -364,11 +381,12 @@ impl Vm {
                 }
 
                 OpCodeKind::Call => {
+                    // 実行対象の関数オブジェクトを取得する
                     let stack_top = self
                         .stack_top()
                         .context("failed to get the compiled function.")?;
 
-                    let func = if let Object::CompiledFunction(f) = stack_top.as_ref() {
+                    let func_guard = if let Object::CompiledFunction(f) = stack_top.as_ref() {
                         f
                     } else {
                         bail!(RuntimeError::NotCallble {
@@ -376,19 +394,24 @@ impl Vm {
                         });
                     };
 
-                    let func = &*func.read().unwrap();
+                    let func = &*func_guard.read().unwrap();
 
-                    let frame = Frame::new(func);
-
+                    // 新しいスタックフレームを作成し、vmがそれを利用するようにする
+                    let frame = Frame::new(func, self.sp);
                     self.push_frame(frame);
+
+                    // 実行対象の関数のローカル変数用の領域をスタックに確保する
+                    self.sp += func.local_count();
                 }
 
                 OpCodeKind::ReturnValue => {
                     let return_value = self.pop().context("failed to pop the return value.")?;
 
-                    self.pop_frame();
+                    let frame = self.pop_frame();
                     self.pop()
                         .context("failed to remove the function from the stack.")?;
+
+                    self.sp = frame.base_ptr - 1;
 
                     self.push(return_value)
                         .context("failed to push the return value.")?;
@@ -692,7 +715,6 @@ mod test {
     use crate::lexer::Lexer;
     use crate::object::{HashKeyObject, HashObject, Object};
     use crate::parser::Parser;
-    use crate::symbol_table::reset_symbol_count;
     use crate::{ast, object};
 
     use super::Vm;
@@ -736,10 +758,6 @@ mod test {
 
     fn run_vm_tests(tests: &[VmTestCase]) -> Result<()> {
         for (i, test) in tests.iter().enumerate() {
-            unsafe {
-                reset_symbol_count();
-            }
-
             let program = parse(test.input)
                 .with_context(|| format!("test {} failed. failed to parse an input.", i))?;
 
@@ -1144,5 +1162,58 @@ mod test {
             ",
             Object::int(1),
         )];
+    }
+
+    #[test]
+    fn test_functions_with_local_bindings() {
+        let tests = [
+            VmTestCase::new(
+                "
+            let one = fn() { let one = 1; one };
+            one();
+            ",
+                Object::int(1),
+            ),
+            VmTestCase::new(
+                "
+            let oneAndTwo = fn() { let one = 1; let two = 2; one + two; };
+            oneAndTwo();
+            ",
+                Object::int(3),
+            ),
+            VmTestCase::new(
+                "
+                let oneAndTwo = fn() { let one = 1; let two = 2; one + two; };
+                let threeAndFour = fn() { let three = 3; let four = 4; three + four; };
+                oneAndTwo() + threeAndFour();
+                ",
+                Object::int(10),
+            ),
+            VmTestCase::new(
+                "
+                let firstFoobar = fn() { let foobar = 50; foobar; };
+                 let secondFoobar = fn() { let foobar = 100; foobar; };
+                 firstFoobar() + secondFoobar();
+                ",
+                Object::int(150),
+            ),
+            VmTestCase::new(
+                "
+                let globalSeed = 50;
+                   let minusOne = fn() {
+                       let num = 1;
+                       globalSeed - num;
+                   }
+                   let minusTwo = fn() {
+                       let num = 2;
+                       globalSeed - num;
+                   }
+                   minusOne() + minusTwo();
+                ",
+                Object::int(97),
+            ),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
     }
 }
