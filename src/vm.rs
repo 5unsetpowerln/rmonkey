@@ -1154,14 +1154,26 @@ mod test {
 
     #[test]
     fn test_first_class_functions() {
-        let tests = [VmTestCase::new(
-            "
+        let tests = [
+            VmTestCase::new(
+                "
                 let returnsOne = fn() { 1; };
                 let returnsOneReturner = fn() { returnsOne; };
                 returnsOneReturner()();
             ",
-            Object::int(1),
-        )];
+                Object::int(1),
+            ),
+            VmTestCase::new(
+                "
+            let returnsOneReturner = fn() {
+                        let returnsOne = fn() { 1; };
+                        returnsOne;
+                    };
+                    returnsOneReturner()();
+            ",
+                Object::int(1),
+            ),
+        ];
     }
 
     #[test]
