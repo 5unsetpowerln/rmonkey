@@ -117,10 +117,11 @@ impl Object {
         Self::ReturnValue(Arc::new(RwLock::new(ReturnValue::new(val))))
     }
 
-    pub fn compiled_function(instructions: &[u8], local_count: usize) -> Self {
+    pub fn compiled_function(instructions: &[u8], local_count: usize, args_count: usize) -> Self {
         Self::CompiledFunction(Arc::new(RwLock::new(CompiledFunction::new(
             instructions,
             local_count,
+            args_count,
         ))))
     }
 
@@ -498,25 +499,31 @@ impl ObjectInterface for HashObject {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledFunction {
     pub instructions: Vec<u8>,
-    local_count: usize,
+    locals_count: usize,
+    args_count: usize,
 }
 
 impl CompiledFunction {
-    pub fn new(instructions: &[u8], local_count: usize) -> Self {
+    pub fn new(instructions: &[u8], locals_count: usize, args_count: usize) -> Self {
         Self {
             instructions: instructions.to_vec(),
-            local_count,
+            locals_count,
+            args_count,
         }
     }
 
     pub fn local_count(&self) -> usize {
-        self.local_count
+        self.locals_count
+    }
+
+    pub fn args_count(&self) -> usize {
+        self.args_count
     }
 }
 
 impl Display for CompiledFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "number of local bindings: {}", self.local_count)?;
+        writeln!(f, "number of local bindings: {}", self.locals_count)?;
         write!(f, "{:?}", self.instructions)
     }
 }

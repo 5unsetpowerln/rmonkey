@@ -137,7 +137,7 @@ impl OpCodeDef {
 
     const INDEX: OpCodeDef = OpCodeDef::new(OpCodeKind::Index, "OpIndex", &[]);
 
-    const CALL: OpCodeDef = OpCodeDef::new(OpCodeKind::Call, "OpCall", &[]);
+    const CALL: OpCodeDef = OpCodeDef::new(OpCodeKind::Call, "OpCall", &[1]);
     const RETURN_VALUE: OpCodeDef = OpCodeDef::new(OpCodeKind::ReturnValue, "OpReturnValue", &[]);
 
     const GET_LOCAL: OpCodeDef = OpCodeDef::new(OpCodeKind::GetLocal, "OpGetLocal", &[1]);

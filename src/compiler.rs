@@ -1,10 +1,10 @@
 use std::mem;
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use thiserror::Error;
 
-use crate::ast::{BlockStatement, PrefixExpression};
+use crate::ast::{BlockStatement, Expression, PrefixExpression};
 use crate::code::{OpCodeKind, create_inst};
 use crate::object::{CompiledFunction, Object};
 use crate::symbol_table::{GLOBAL_SCOPE, Symbol, SymbolTable};
@@ -461,6 +461,10 @@ impl Compiler {
             ast::Node::FunctionLiteral(func_literal) => {
                 self.enter_scope();
 
+                for param in func_literal.params.iter() {
+                    self.symbol_table.define(&param.value);
+                }
+
                 self.compile(&func_literal.body)
                     .context("failed to compile the function block.")?;
 
@@ -472,8 +476,11 @@ impl Compiler {
                 let local_count = self.symbol_table.def_count();
 
                 let insts = self.leave_scope();
-                let const_idx =
-                    self.add_const(Arc::new(Object::compiled_function(&insts, local_count)));
+                let const_idx = self.add_const(Arc::new(Object::compiled_function(
+                    &insts,
+                    local_count,
+                    func_literal.params.len(),
+                )));
 
                 self.add_inst(OpCodeKind::Constant, &[const_idx as i64])
                     .context("failed to add the constant instruction.")?;
@@ -489,9 +496,14 @@ impl Compiler {
 
             ast::Node::CallExpression(call_expr) => {
                 self.compile(call_expr.func.as_ref())
-                    .context("failed to call the function expression.")?;
+                    .context("failed to compile the function expression.")?;
 
-                self.add_inst(OpCodeKind::Call, &[])
+                for arg in call_expr.args.iter() {
+                    self.compile(arg)
+                        .context("failed to compile an argument.")?;
+                }
+
+                self.add_inst(OpCodeKind::Call, &[call_expr.args.len() as i64])
                     .context("failed to add the call instruction.")?;
             }
 
@@ -1276,6 +1288,7 @@ mod test {
                             create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                         ]),
                         0,
+                        0,
                     ),
                 ],
                 &[
@@ -1296,6 +1309,7 @@ mod test {
                             create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                         ]),
                         0,
+                        0,
                     ),
                 ],
                 &[
@@ -1310,6 +1324,7 @@ mod test {
                         create_inst(OpCodeKind::Null, &[]).unwrap(),
                         create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                     ]),
+                    0,
                     0,
                 )],
                 &[
@@ -1335,11 +1350,12 @@ mod test {
                             create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                         ]),
                         0,
+                        0,
                     ),
                 ],
                 &[
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
-                    create_inst(OpCodeKind::Call, &[]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[0]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
@@ -1356,17 +1372,132 @@ mod test {
                             create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                         ]),
                         0,
+                        0,
                     ),
                 ],
                 &[
                     create_inst(OpCodeKind::Constant, &[1]).unwrap(),
                     create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
                     create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
-                    create_inst(OpCodeKind::Call, &[]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+                let oneArg = fn(a) { };
+                          oneArg(24);
+                ",
+                &[
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Null, &[]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                        1,
+                    ),
+                    Object::int(24),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+                let manyArg = fn(a, b, c) { };
+                manyArg(24, 25, 26);
+                ",
+                &[
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::Null, &[]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                        3,
+                    ),
+                    Object::int(24),
+                    Object::int(25),
+                    Object::int(26),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+                let oneArg = fn(a) { a };
+                oneArg(24);
+                ",
+                &[
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::GetLocal, &[0]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                        1,
+                    ),
+                    Object::int(24),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+                let manyArg = fn(a, b, c) { a; b; c };
+                manyArg(24, 25, 26);
+                ",
+                &[
+                    Object::compiled_function(
+                        &flatten_u8(vec![
+                            create_inst(OpCodeKind::GetLocal, &[0]).unwrap(),
+                            create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                            create_inst(OpCodeKind::GetLocal, &[1]).unwrap(),
+                            create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                            create_inst(OpCodeKind::GetLocal, &[2]).unwrap(),
+                            create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                        ]),
+                        0,
+                        3,
+                    ),
+                    Object::int(24),
+                    Object::int(25),
+                    Object::int(26),
+                ],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::SetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[3]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[3]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
         ];
+
+        run_compiler_tests(&tests);
     }
 
     #[test]
@@ -1383,6 +1514,7 @@ mod test {
                             create_inst(OpCodeKind::GetGlobal, &[0]).unwrap(),
                             create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                         ]),
+                        0,
                         0,
                     ),
                 ],
@@ -1410,6 +1542,7 @@ mod test {
                             create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                         ]),
                         1,
+                        0,
                     ),
                 ],
                 &[
@@ -1438,6 +1571,7 @@ mod test {
                             create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
                         ]),
                         2,
+                        0,
                     ),
                 ],
                 &[

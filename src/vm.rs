@@ -3,7 +3,7 @@ use std::slice;
 use std::sync::{self, LazyLock, PoisonError};
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use thiserror::Error;
 
 use crate::code::OpCodeKind;
@@ -64,6 +64,9 @@ pub enum RuntimeError {
 
     #[error("`{value}` is not callable")]
     NotCallble { value: Object },
+
+    #[error("wrong number of arguments. expected: {expected}, got: {got}")]
+    WrongNumberOfArguments { expected: usize, got: usize },
 }
 
 static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
@@ -105,7 +108,7 @@ pub struct Vm {
 
 impl Vm {
     pub fn new(bytecode: &ByteCode) -> Self {
-        let main_fn = CompiledFunction::new(&bytecode.instructions, 0);
+        let main_fn = CompiledFunction::new(&bytecode.instructions, 0, 0);
         let main_frame = Frame::new(&main_fn, 0);
 
         let mut frames = Vec::with_capacity(FRAME_SIZE);
@@ -381,27 +384,43 @@ impl Vm {
                 }
 
                 OpCodeKind::Call => {
-                    // 実行対象の関数オブジェクトを取得する
-                    let stack_top = self
-                        .stack_top()
-                        .context("failed to get the compiled function.")?;
+                    let args_count = self.read_n(1)?[0] as usize;
 
-                    let func_guard = if let Object::CompiledFunction(f) = stack_top.as_ref() {
-                        f
+                    // 実行対象の関数オブジェクトを取得する
+                    let func_guard = if let Object::CompiledFunction(f) =
+                        self.stack[self.sp - args_count - 1].as_ref()
+                    {
+                        f.clone()
                     } else {
                         bail!(RuntimeError::NotCallble {
-                            value: stack_top.as_ref().clone()
+                            value: self.stack[self.sp - args_count - 1].as_ref().clone()
                         });
                     };
 
                     let func = &*func_guard.read().unwrap();
 
-                    // 新しいスタックフレームを作成し、vmがそれを利用するようにする
-                    let frame = Frame::new(func, self.sp);
-                    self.push_frame(frame);
+                    ensure!(
+                        func.args_count() == args_count,
+                        RuntimeError::WrongNumberOfArguments {
+                            expected: func.args_count(),
+                            got: args_count
+                        }
+                    );
+
+                    // function
+                    // arg0 <- base
+                    // arg1
+                    // local0 <- sp
+                    // local1
+
+                    // 新しいスタックフレームを作成する
+                    let frame = Frame::new(func, self.sp - args_count);
 
                     // 実行対象の関数のローカル変数用の領域をスタックに確保する
-                    self.sp += func.local_count();
+                    // self.sp = frame.base_ptr + func.local_count();
+                    self.sp = frame.base_ptr + func.local_count() + args_count;
+
+                    self.push_frame(frame);
                 }
 
                 OpCodeKind::ReturnValue => {
@@ -717,7 +736,7 @@ mod test {
     use crate::parser::Parser;
     use crate::{ast, object};
 
-    use super::Vm;
+    use super::{RuntimeError, Vm};
 
     fn parse(input: &str) -> Result<ast::Program> {
         let mut lexer = Lexer::new(input);
@@ -1227,5 +1246,129 @@ mod test {
         ];
 
         run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_functions_with_arguments_and_bindings() {
+        let tests = [
+            VmTestCase::new(
+                "
+            let identity = fn(a) { a; };
+            identity(4);
+            ",
+                Object::int(4),
+            ),
+            VmTestCase::new(
+                "
+            let sum = fn(a, b) { a + b; };
+            sum(1, 2);
+            ",
+                Object::int(3),
+            ),
+            VmTestCase::new(
+                "
+                let sum = fn(a, b) {
+                    let c = a + b;
+                    c;
+                };
+                sum(1, 2);
+                ",
+                Object::int(3),
+            ),
+            VmTestCase::new(
+                "
+                let sum = fn(a, b) {
+                          let c = a + b;
+                          c;
+                      };
+                      sum(1, 2) + sum(3, 4);
+                ",
+                Object::int(10),
+            ),
+            VmTestCase::new(
+                "
+                let sum = fn(a, b) {
+                           let c = a + b;
+                           c;
+                       };
+                       let outer = fn() {
+                           sum(1, 2) + sum(3, 4);
+                       };
+                       outer();
+                ",
+                Object::int(10),
+            ),
+            VmTestCase::new(
+                "
+                let globalNum = 10;
+
+                let sum = fn(a, b) {
+                    let c = a + b;
+                    c + globalNum;
+                };
+
+                let outer = fn() {
+                    sum(1, 2) + sum(3, 4) + globalNum;
+                };
+
+                outer() + globalNum;
+                ",
+                Object::int(50),
+            ),
+        ];
+
+        run_vm_tests(&tests).expect("a vm test failed.");
+    }
+
+    #[test]
+    fn test_functions_with_wrong_arguments() {
+        let tests = [
+            ("fn() { 1; }(1);", (0, 1)),
+            ("fn(a) { a; }();", (1, 0)),
+            ("fn(a, b) { a + b; }(1);", (2, 1)),
+        ];
+
+        for test in tests.iter() {
+            let program = parse(test.0).expect("failed to parse an input");
+            let mut compiler = Compiler::new();
+
+            compiler
+                .compile(&program)
+                .expect("failed to compile a program.");
+
+            let bytecode = compiler.get_bytecode();
+            let mut vm = Vm::new(&bytecode);
+
+            if let Err(err) = vm.run() {
+                let original_err = err.downcast_ref::<RuntimeError>().unwrap();
+
+                match original_err {
+                    RuntimeError::WrongNumberOfArguments { expected, got } => {
+                        if *expected != (test.1).0 || *got != (test.1).1 {
+                            panic!(
+                                "expected: {}, got: {}",
+                                RuntimeError::WrongNumberOfArguments {
+                                    expected: (test.1).0,
+                                    got: (test.1).1
+                                },
+                                original_err
+                            );
+                        }
+                    }
+                    _ => {
+                        panic!(
+                            "expected: {}, got: {}",
+                            RuntimeError::WrongNumberOfArguments {
+                                expected: (test.1).0,
+                                got: (test.1).1
+                            },
+                            original_err
+                        );
+                    }
+                }
+            } else {
+                panic!("function with wrong arguments was executed without any error.");
+            }
+        }
     }
 }

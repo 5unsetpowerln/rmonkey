@@ -14,8 +14,12 @@ pub fn len(args: &[Arc<Object>]) -> Result<Option<Arc<Object>>> {
     let arg = &*args[0];
 
     match arg {
-        Object::String(s) => Ok(Some(Arc::new(Object::int(s.read().unwrap().value.len() as i64)))),
-        Object::Array(a) => Ok(Some(Arc::new(Object::int(a.read().unwrap().array.len() as i64)))),
+        Object::String(s) => Ok(Some(Arc::new(Object::int(
+            s.read().unwrap().value.len() as i64
+        )))),
+        Object::Array(a) => Ok(Some(Arc::new(Object::int(
+            a.read().unwrap().array.len() as i64
+        )))),
         _ => Err(anyhow!("{arg:?} is not supported by len.")),
     }
 }
@@ -32,7 +36,8 @@ pub fn first(args: &[Arc<Object>]) -> Result<Option<Arc<Object>>> {
     match arg {
         Object::Array(array) => Ok(Some(
             array
-                .read().unwrap()
+                .read()
+                .unwrap()
                 .array
                 .first()
                 .context("the array is empty.")?
@@ -54,7 +59,8 @@ pub fn last(args: &[Arc<Object>]) -> Result<Option<Arc<Object>>> {
     match arg {
         Object::Array(array) => Ok(Some(
             array
-                .read().unwrap()
+                .read()
+                .unwrap()
                 .array
                 .last()
                 .context("the array is empty.")?
