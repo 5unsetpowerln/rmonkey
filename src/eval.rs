@@ -47,9 +47,7 @@ pub fn eval<T: ast::NodeInterface>(
     node: &T,
     env: Arc<RwLock<Environment>>,
 ) -> Result<Option<Arc<object::Object>>> {
-    env.write()
-        .unwrap()
-        .set("len", Arc::new(Object::builtin(builtins::len)));
+    env.write().unwrap().set("len", Arc::new());
     env.write()
         .unwrap()
         .set("first", Arc::new(Object::builtin(builtins::first)));

@@ -49,6 +49,7 @@ pub enum OpCodeKind {
     ReturnValue,
     SetLocal,
     GetLocal,
+    GetBuiltin,
 }
 
 #[derive(Debug)]
@@ -98,6 +99,7 @@ impl OpCodeDef {
             OpCodeKind::ReturnValue => &Self::RETURN_VALUE,
             OpCodeKind::GetLocal => &Self::GET_LOCAL,
             OpCodeKind::SetLocal => &Self::SET_LOCAL,
+            OpCodeKind::GetBuiltin => &Self::GET_BUILTIN,
         }
     }
 
@@ -142,6 +144,8 @@ impl OpCodeDef {
 
     const GET_LOCAL: OpCodeDef = OpCodeDef::new(OpCodeKind::GetLocal, "OpGetLocal", &[1]);
     const SET_LOCAL: OpCodeDef = OpCodeDef::new(OpCodeKind::SetLocal, "OpSetLocal", &[1]);
+
+    const GET_BUILTIN: OpCodeDef = OpCodeDef::new(OpCodeKind::GetBuiltin, "OpGetBuiltin", &[1]);
 }
 
 impl fmt::Display for OpCodeDef {

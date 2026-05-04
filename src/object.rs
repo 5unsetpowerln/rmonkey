@@ -535,7 +535,7 @@ impl ObjectInterface for CompiledFunction {
 }
 
 // Builtin
-pub type BuiltinFunction = fn(&[Arc<Object>]) -> Result<Option<Arc<Object>>>;
+pub type BuiltinFunction = fn(&[Arc<Object>]) -> Result<Arc<Object>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Builtin {
@@ -543,7 +543,7 @@ pub struct Builtin {
 }
 
 impl Builtin {
-    pub fn new(func: BuiltinFunction) -> Self {
+    pub const fn new(func: BuiltinFunction) -> Self {
         Self { func }
     }
 }

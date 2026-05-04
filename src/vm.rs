@@ -6,10 +6,12 @@ use std::sync::{Arc, RwLock};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use thiserror::Error;
 
+use crate::builtins::BUILTINS;
 use crate::code::OpCodeKind;
 use crate::compiler::ByteCode;
 use crate::object::{
-    BoolObject, CompiledFunction, HashKeyObject, HashObject, IntegerObject, Object, StringObject,
+    BoolObject, Builtin, CompiledFunction, HashKeyObject, HashObject, IntegerObject, Object,
+    StringObject,
 };
 use crate::utils::u16_from_be_bytes;
 
@@ -67,6 +69,9 @@ pub enum RuntimeError {
 
     #[error("wrong number of arguments. expected: {expected}, got: {got}")]
     WrongNumberOfArguments { expected: usize, got: usize },
+
+    #[error("no builtin function is associated with {index}")]
+    UnknownBuiltin { index: usize },
 }
 
 static TRUE: LazyLock<Arc<Object>> = LazyLock::new(|| Arc::new(Object::bool(true)));
@@ -386,41 +391,8 @@ impl Vm {
                 OpCodeKind::Call => {
                     let args_count = self.read_n(1)?[0] as usize;
 
-                    // 実行対象の関数オブジェクトを取得する
-                    let func_guard = if let Object::CompiledFunction(f) =
-                        self.stack[self.sp - args_count - 1].as_ref()
-                    {
-                        f.clone()
-                    } else {
-                        bail!(RuntimeError::NotCallble {
-                            value: self.stack[self.sp - args_count - 1].as_ref().clone()
-                        });
-                    };
-
-                    let func = &*func_guard.read().unwrap();
-
-                    ensure!(
-                        func.args_count() == args_count,
-                        RuntimeError::WrongNumberOfArguments {
-                            expected: func.args_count(),
-                            got: args_count
-                        }
-                    );
-
-                    // function
-                    // arg0 <- base
-                    // arg1
-                    // local0 <- sp
-                    // local1
-
-                    // 新しいスタックフレームを作成する
-                    let frame = Frame::new(func, self.sp - args_count);
-
-                    // 実行対象の関数のローカル変数用の領域をスタックに確保する
-                    // self.sp = frame.base_ptr + func.local_count();
-                    self.sp = frame.base_ptr + func.local_count() + args_count;
-
-                    self.push_frame(frame);
+                    self.execute_call(args_count)
+                        .context("failed to execute the call instruction.")?;
                 }
 
                 OpCodeKind::ReturnValue => {
@@ -436,11 +408,92 @@ impl Vm {
                         .context("failed to push the return value.")?;
                 }
 
+                OpCodeKind::GetBuiltin => {
+                    let index = self.read_n(1)?[0] as usize;
+
+                    let builtin = if let Some(b) = BUILTINS.get(index) {
+                        &b.1
+                    } else {
+                        bail!(RuntimeError::UnknownBuiltin { index });
+                    };
+
+                    self.push(Arc::new(Object::Builtin(Arc::new(RwLock::new(
+                        builtin.clone(),
+                    )))))
+                    .context("failed to push the builtin function object.")?;
+                }
+
                 _ => {
                     panic!("{:?} is not implemented", op_kind);
                 } // _ => unimplemented!(),
             }
         }
+
+        Ok(())
+    }
+
+    fn execute_call(&mut self, args_count: usize) -> Result<()> {
+        match self.stack[self.sp - args_count - 1].as_ref() {
+            Object::CompiledFunction(func) => {
+                self.call_function(func.clone(), args_count)
+                    .context("failed to call the function")?;
+            }
+            Object::Builtin(builtin) => {
+                self.call_builtin(builtin.clone(), args_count)
+                    .context("failed to call the builtin function")?;
+            }
+            _ => {
+                bail!(RuntimeError::NotCallble {
+                    value: self.stack[self.sp - args_count - 1].as_ref().clone()
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn call_builtin(&mut self, callee: Arc<RwLock<Builtin>>, args_count: usize) -> Result<()> {
+        let builtin = &*callee.read().unwrap();
+
+        let args = &self.stack[self.sp - args_count..self.sp];
+        self.sp -= args_count + 1; // 引数とbuiltin
+
+        let result = (builtin.func)(args).context("failed to execute the builtin function.")?;
+
+        self.push(result).context("failed to push the result.")?;
+
+        Ok(())
+    }
+
+    fn call_function(
+        &mut self,
+        callee: Arc<RwLock<CompiledFunction>>,
+        args_count: usize,
+    ) -> Result<()> {
+        let func = &*callee.read().unwrap();
+
+        ensure!(
+            func.args_count() == args_count,
+            RuntimeError::WrongNumberOfArguments {
+                expected: func.args_count(),
+                got: args_count
+            }
+        );
+
+        // function
+        // arg0 <- base
+        // arg1
+        // local0 <- sp
+        // local1
+
+        // 新しいスタックフレームを作成する
+        let frame = Frame::new(func, self.sp - args_count);
+
+        // 実行対象の関数のローカル変数用の領域をスタックに確保する
+        // self.sp = frame.base_ptr + func.local_count();
+        self.sp = frame.base_ptr + func.local_count() + args_count;
+
+        self.push_frame(frame);
 
         Ok(())
     }
@@ -1369,6 +1422,26 @@ mod test {
             } else {
                 panic!("function with wrong arguments was executed without any error.");
             }
+        }
+
+        #[test]
+        fn test_builtin_functions() {
+            let tests = [
+                VmTestCase::new("len(\"\")", Object::int(0)),
+                VmTestCase::new("len(\"four\")", Object::int(4)),
+                VmTestCase::new("len(\"hello world\")", Object::int(11)),
+                VmTestCase::new("len([1, 2, 3])", Object::int(3)),
+                VmTestCase::new("len([])", Object::int(0)),
+                VmTestCase::new("first([1, 2, 3])", Object::int(1)),
+                VmTestCase::new("last([1, 2, 3])", Object::int(3)),
+                VmTestCase::new(
+                    "rest([1, 2, 3])",
+                    Object::array(&[Object::int(2), Object::int(3)]),
+                ),
+                VmTestCase::new("push([], 1)", Object::array(&[Object::int(1)])),
+            ];
+
+            run_vm_tests(&tests).expect("a vm test failed.");
         }
     }
 }

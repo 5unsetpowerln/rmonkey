@@ -2,21 +2,25 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const GLOBAL_SCOPE: &str = "GLOBAL";
-pub const LOCAL_SCOPE: &str = "LOCAL";
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Scope {
+    Global,
+    Local,
+    Builtin,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
     pub name: String,
-    pub scope: String,
+    pub scope: Scope,
     pub index: usize,
 }
 
 impl Symbol {
-    pub fn new(name: &str, scope: &str, index: usize) -> Self {
+    pub fn new(name: &str, scope: Scope, index: usize) -> Self {
         Self {
             name: name.to_string(),
-            scope: scope.to_string(),
+            scope,
             index,
         }
     }
@@ -48,13 +52,21 @@ impl SymbolTable {
 
     pub fn define(&mut self, name: &str) -> Symbol {
         let symbol = if self.outer.is_some() {
-            Symbol::new(name, LOCAL_SCOPE, self.def_count)
+            Symbol::new(name, Scope::Local, self.def_count)
         } else {
-            Symbol::new(name, GLOBAL_SCOPE, self.def_count)
+            Symbol::new(name, Scope::Global, self.def_count)
         };
 
         self.store.insert(name.to_string(), symbol.clone());
         self.def_count += 1;
+        symbol
+    }
+
+    pub fn define_builtin(&mut self, name: &str, index: usize) -> Symbol {
+        let symbol = Symbol::new(name, Scope::Builtin, index);
+
+        self.store.insert(name.to_string(), symbol.clone());
+
         symbol
     }
 
@@ -106,7 +118,7 @@ mod test {
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
 
-    use super::{GLOBAL_SCOPE, LOCAL_SCOPE, Symbol, SymbolTable};
+    use super::{Scope, Symbol, SymbolTable};
 
     #[test]
     fn test_define() {
@@ -123,12 +135,12 @@ mod test {
         let f = second_local.write().unwrap().define("f");
 
         let tests = [
-            (a, Symbol::new("a", GLOBAL_SCOPE, 0)),
-            (b, Symbol::new("b", GLOBAL_SCOPE, 1)),
-            (c, Symbol::new("c", LOCAL_SCOPE, 0)),
-            (d, Symbol::new("d", LOCAL_SCOPE, 1)),
-            (e, Symbol::new("e", LOCAL_SCOPE, 0)),
-            (f, Symbol::new("f", LOCAL_SCOPE, 1)),
+            (a, Symbol::new("a", Scope::Global, 0)),
+            (b, Symbol::new("b", Scope::Global, 1)),
+            (c, Symbol::new("c", Scope::Local, 0)),
+            (d, Symbol::new("d", Scope::Local, 1)),
+            (e, Symbol::new("e", Scope::Local, 0)),
+            (f, Symbol::new("f", Scope::Local, 1)),
         ];
 
         for test in tests.iter() {
@@ -145,8 +157,8 @@ mod test {
         global.define("b");
 
         let expected = [
-            Symbol::new("a", GLOBAL_SCOPE, 0),
-            Symbol::new("b", GLOBAL_SCOPE, 1),
+            Symbol::new("a", Scope::Global, 0),
+            Symbol::new("b", Scope::Global, 1),
         ];
 
         for symbol in expected.iter() {
@@ -176,10 +188,10 @@ mod test {
         local.define("d");
 
         let expected = vec![
-            Symbol::new("a", GLOBAL_SCOPE, 0),
-            Symbol::new("b", GLOBAL_SCOPE, 1),
-            Symbol::new("c", LOCAL_SCOPE, 0),
-            Symbol::new("d", LOCAL_SCOPE, 1),
+            Symbol::new("a", Scope::Global, 0),
+            Symbol::new("b", Scope::Global, 1),
+            Symbol::new("c", Scope::Local, 0),
+            Symbol::new("d", Scope::Local, 1),
         ];
 
         for (i, symbol) in expected.iter().enumerate() {
@@ -218,19 +230,19 @@ mod test {
             (
                 first_local,
                 vec![
-                    Symbol::new("a", GLOBAL_SCOPE, 0),
-                    Symbol::new("b", GLOBAL_SCOPE, 1),
-                    Symbol::new("c", LOCAL_SCOPE, 0),
-                    Symbol::new("d", LOCAL_SCOPE, 1),
+                    Symbol::new("a", Scope::Global, 0),
+                    Symbol::new("b", Scope::Global, 1),
+                    Symbol::new("c", Scope::Local, 0),
+                    Symbol::new("d", Scope::Local, 1),
                 ],
             ),
             (
                 second_local,
                 vec![
-                    Symbol::new("a", GLOBAL_SCOPE, 0),
-                    Symbol::new("b", GLOBAL_SCOPE, 1),
-                    Symbol::new("e", LOCAL_SCOPE, 0),
-                    Symbol::new("f", LOCAL_SCOPE, 1),
+                    Symbol::new("a", Scope::Global, 0),
+                    Symbol::new("b", Scope::Global, 1),
+                    Symbol::new("e", Scope::Local, 0),
+                    Symbol::new("f", Scope::Local, 1),
                 ],
             ),
         ];

@@ -1,6 +1,7 @@
 use std::io::{Write, stdin, stdout};
 use std::sync::Arc;
 
+use crate::builtins::BUILTINS;
 use crate::compiler::Compiler;
 use crate::lexer::Lexer;
 use crate::object::{Environment, Object};
@@ -23,6 +24,10 @@ pub fn start() {
         .collect::<Vec<Option<Arc<Object>>>>()
         .to_vec();
     let mut symbol_table = symbol_table::SymbolTable::new();
+    for (index, (name, _)) in BUILTINS.iter().enumerate() {
+        symbol_table.define_builtin(name, index);
+    }
+
     let mut constants = Vec::new();
 
     loop {

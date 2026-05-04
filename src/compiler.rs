@@ -5,9 +5,11 @@ use anyhow::{Context, Result, bail, ensure};
 use thiserror::Error;
 
 use crate::ast::{BlockStatement, Expression, PrefixExpression};
+use crate::builtins::BUILTINS;
 use crate::code::{OpCodeKind, create_inst};
 use crate::object::{CompiledFunction, Object};
-use crate::symbol_table::{GLOBAL_SCOPE, Symbol, SymbolTable};
+use crate::symbol_table::Scope;
+use crate::symbol_table::{Scope::Global, Symbol, SymbolTable};
 use crate::{ast, object};
 
 #[derive(Debug, Error)]
@@ -62,12 +64,17 @@ pub struct Compiler {
 impl Compiler {
     pub fn new() -> Self {
         let scopes = vec![CompilationScope::new()];
+        let mut symbol_table = SymbolTable::new();
+
+        for (index, (name, _)) in BUILTINS.iter().enumerate() {
+            symbol_table.define_builtin(name, index);
+        }
 
         Self {
             constants: Vec::new(),
             scopes,
             scope_idx: 0,
-            symbol_table: SymbolTable::new(),
+            symbol_table,
         }
     }
 
@@ -207,7 +214,7 @@ impl Compiler {
                     .context("failed to compile the value.")?;
                 let symbol = self.symbol_table.define(&let_stmt.name.value);
 
-                if symbol.scope == GLOBAL_SCOPE {
+                if symbol.scope == Scope::Global {
                     self.add_inst(OpCodeKind::SetGlobal, &[symbol.index as i64])
                         .context("failed to add the set-global instruction.")?;
                 } else {
@@ -418,13 +425,17 @@ impl Compiler {
                     }),
                 };
 
-                if symbol.scope == GLOBAL_SCOPE {
-                    self.add_inst(OpCodeKind::GetGlobal, &[symbol.index as i64])
-                        .context("failed to add the get-global instruction.")?;
-                } else {
-                    self.add_inst(OpCodeKind::GetLocal, &[symbol.index as i64])
-                        .context("failed to add the get-local instruction.")?;
-                }
+                match symbol.scope {
+                    Scope::Local => self
+                        .add_inst(OpCodeKind::GetLocal, &[symbol.index as i64])
+                        .context("failed to add the get-local instruction.")?,
+                    Scope::Global => self
+                        .add_inst(OpCodeKind::GetGlobal, &[symbol.index as i64])
+                        .context("failed to add the get-global instruction.")?,
+                    Scope::Builtin => self
+                        .add_inst(OpCodeKind::GetBuiltin, &[symbol.index as i64])
+                        .context("failed to add the get-builtin instruction.")?,
+                };
             }
 
             ast::Node::ArrayLiteral(array_literal) => {
@@ -562,7 +573,7 @@ mod test {
     use crate::lexer::Lexer;
     use crate::object::Object;
     use crate::parser::Parser;
-    use crate::symbol_table::{GLOBAL_SCOPE, Symbol};
+    use crate::symbol_table::{Scope::Global, Symbol};
     use crate::utils::flatten_u8;
     use crate::utils::print_errors;
 
@@ -1576,6 +1587,51 @@ mod test {
                 ],
                 &[
                     create_inst(OpCodeKind::Constant, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+        ];
+
+        run_compiler_tests(&tests);
+    }
+
+    #[test]
+    fn test_builtins() {
+        let tests = [
+            CompilerTestCase::new(
+                "
+                len([]);
+                push([], 1);
+                ",
+                &[Object::int(1)],
+                &[
+                    create_inst(OpCodeKind::GetBuiltin, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Array, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[1]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                    create_inst(OpCodeKind::GetBuiltin, &[5]).unwrap(),
+                    create_inst(OpCodeKind::Array, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
+                    create_inst(OpCodeKind::Call, &[2]).unwrap(),
+                    create_inst(OpCodeKind::Pop, &[]).unwrap(),
+                ],
+            ),
+            CompilerTestCase::new(
+                "
+fn() { len([]) }
+            ",
+                &[Object::compiled_function(
+                    &flatten_u8(vec![
+                        create_inst(OpCodeKind::GetBuiltin, &[0]).unwrap(),
+                        create_inst(OpCodeKind::Array, &[0]).unwrap(),
+                        create_inst(OpCodeKind::Call, &[1]).unwrap(),
+                        create_inst(OpCodeKind::ReturnValue, &[]).unwrap(),
+                    ]),
+                    0,
+                    0,
+                )],
+                &[
+                    create_inst(OpCodeKind::Constant, &[0]).unwrap(),
                     create_inst(OpCodeKind::Pop, &[]).unwrap(),
                 ],
             ),
